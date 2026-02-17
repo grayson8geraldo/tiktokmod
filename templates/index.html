@@ -13,6 +13,7 @@
     --accent-hover: #7f70f0;
     --success: #00b894;
     --danger: #e17055;
+    --warn: #fdcb6e;
     --text: #e0e0e0;
     --text-dim: #888;
     --radius: 12px;
@@ -195,6 +196,16 @@
     border-color: var(--accent);
   }
 
+  .method-hint {
+    font-size: 0.8em;
+    color: var(--text-dim);
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: rgba(108, 92, 231, 0.08);
+    border-radius: 8px;
+    grid-column: 1 / -1;
+  }
+
   /* ── Button ── */
   .btn-run {
     display: block;
@@ -269,6 +280,12 @@
     color: var(--success);
   }
 
+  .result-status.partial {
+    background: rgba(253, 203, 110, 0.15);
+    border: 1px solid var(--warn);
+    color: var(--warn);
+  }
+
   .result-status.fail {
     background: rgba(225, 112, 85, 0.15);
     border: 1px solid var(--danger);
@@ -318,6 +335,72 @@
     color: var(--accent);
     font-size: 0.9em;
     margin-top: 2px;
+  }
+
+  /* ── Model verification table ── */
+  .model-verify {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 24px;
+  }
+
+  .model-verify h3 {
+    font-size: 0.9em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+
+  .model-row {
+    display: flex;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    gap: 12px;
+  }
+
+  .model-row:last-child { border-bottom: none; }
+
+  .model-status {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85em;
+    flex-shrink: 0;
+  }
+
+  .model-status.fooled {
+    background: rgba(0, 184, 148, 0.2);
+    color: var(--success);
+  }
+
+  .model-status.not-fooled {
+    background: rgba(225, 112, 85, 0.2);
+    color: var(--danger);
+  }
+
+  .model-name {
+    font-weight: 600;
+    min-width: 120px;
+  }
+
+  .model-prediction {
+    flex: 1;
+    color: var(--text-dim);
+    font-size: 0.9em;
+  }
+
+  .model-conf-val {
+    font-size: 0.9em;
+    color: var(--accent);
+    min-width: 50px;
+    text-align: right;
   }
 
   /* ── Download button ── */
@@ -401,7 +484,7 @@
     border-radius: var(--radius);
     padding: 20px;
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
     gap: 16px;
     text-align: center;
   }
@@ -418,13 +501,28 @@
     margin-top: 4px;
   }
 
+  /* ── Warning ── */
+  .warning-box {
+    background: rgba(253, 203, 110, 0.08);
+    border: 1px solid rgba(253, 203, 110, 0.3);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 24px;
+    font-size: 0.85em;
+    color: var(--warn);
+    line-height: 1.5;
+  }
+
   /* ── Responsive ── */
   @media (max-width: 640px) {
     .preset-grid {
       grid-template-columns: repeat(2, 1fr);
     }
-    .result-grid, .settings-grid, .stats {
+    .result-grid, .settings-grid {
       grid-template-columns: 1fr;
+    }
+    .stats {
+      grid-template-columns: 1fr 1fr;
     }
   }
 </style>
@@ -466,22 +564,27 @@
       <div class="field">
         <label>Метод</label>
         <select id="method">
-          <option value="pgd" selected>PGD (сильнее, медленнее)</option>
-          <option value="fgsm">FGSM (быстрее, слабее)</option>
+          <option value="ensemble" selected>Ensemble MI-DI-TI (макс. переносимость)</option>
+          <option value="pgd">PGD (только ResNet-50)</option>
+          <option value="fgsm">FGSM (быстрый, слабый)</option>
         </select>
       </div>
       <div class="field">
         <label>Epsilon (сила шума)</label>
         <select id="epsilon">
-          <option value="0.01">0.01 — очень тонкий</option>
-          <option value="0.03" selected>0.03 — баланс</option>
-          <option value="0.05">0.05 — сильнее</option>
-          <option value="0.10">0.10 — агрессивный</option>
+          <option value="0.03">0.03 — тонкий</option>
+          <option value="0.06" selected>0.06 — баланс (рекомендуется)</option>
+          <option value="0.10">0.10 — сильный</option>
+          <option value="0.16">0.16 — агрессивный (заметный)</option>
         </select>
       </div>
       <div class="field">
-        <label>Шаги PGD</label>
-        <input type="number" id="steps" value="40" min="1" max="200">
+        <label>Шаги итераций</label>
+        <input type="number" id="steps" value="100" min="10" max="500">
+      </div>
+      <div class="method-hint" id="method-hint">
+        Ensemble MI-DI-TI: атака одновременно по 3 моделям (ResNet-50 + VGG-16 + DenseNet-121)
+        с momentum, input diversity и translation invariance. Лучшая переносимость на другие модели.
       </div>
     </div>
   </div>
@@ -492,7 +595,7 @@
   <!-- Progress -->
   <div class="progress" id="progress">
     <div class="spinner"></div>
-    <div class="progress-text">Атакуем нейросеть... Это может занять 10-30 секунд.</div>
+    <div class="progress-text" id="progress-text">Атакуем ансамбль нейросетей... Это может занять 30-90 секунд.</div>
   </div>
 
   <!-- Results -->
@@ -526,14 +629,27 @@
       </div>
     </div>
 
+    <!-- Model verification -->
+    <div class="model-verify">
+      <h3>Проверка по всем моделям</h3>
+      <div id="model-verify-container"></div>
+    </div>
+
     <!-- Download button -->
     <a class="btn-download" id="download-btn" href="/download" download="adversarial_result.png">
       Скачать результат (PNG)
     </a>
 
+    <!-- Warning -->
+    <div class="warning-box">
+      Важно: адверсариальный шум обманывает классические CNN-модели (ResNet, VGG, DenseNet и подобные).
+      Мультимодальные LLM (GPT-4V, Gemini, Claude) используют совершенно другую архитектуру и, как правило,
+      не поддаются таким атакам — они анализируют изображение на более высоком уровне абстракции.
+    </div>
+
     <!-- Top-5 after attack -->
     <div class="top5">
-      <h3>Top-5 предсказаний после атаки</h3>
+      <h3>Top-5 предсказаний после атаки (ResNet-50)</h3>
       <div id="top5-container"></div>
     </div>
 
@@ -544,12 +660,16 @@
         <div class="stat-label">Метод</div>
       </div>
       <div>
+        <div class="stat-value" id="stat-fooled"></div>
+        <div class="stat-label">Моделей обмануто</div>
+      </div>
+      <div>
         <div class="stat-value" id="stat-linf"></div>
         <div class="stat-label">L&#8734; норма шума</div>
       </div>
       <div>
         <div class="stat-value" id="stat-pixel"></div>
-        <div class="stat-label">Макс. изменение (из 255)</div>
+        <div class="stat-label">Макс. &#916; пиксель</div>
       </div>
     </div>
   </div>
@@ -567,6 +687,28 @@ presetBtns.forEach(btn => {
     selectedTarget = btn.dataset.idx;
     updateRunButton();
   });
+});
+
+// ── Method hint ──
+const methodSelect = document.getElementById('method');
+const methodHint = document.getElementById('method-hint');
+const hints = {
+  ensemble: 'Ensemble MI-DI-TI: атака одновременно по 3 моделям (ResNet-50 + VGG-16 + DenseNet-121) с momentum, input diversity и translation invariance. Лучшая переносимость на другие модели.',
+  pgd: 'PGD: итеративная атака только по ResNet-50. Быстрее, но шум переносится хуже на другие модели.',
+  fgsm: 'FGSM: одношаговая атака. Очень быстрая, но слабая и плохо переносится.'
+};
+
+methodSelect.addEventListener('change', () => {
+  methodHint.textContent = hints[methodSelect.value] || '';
+  // Update default steps
+  const stepsInput = document.getElementById('steps');
+  if (methodSelect.value === 'ensemble') {
+    stepsInput.value = 100;
+  } else if (methodSelect.value === 'pgd') {
+    stepsInput.value = 40;
+  } else {
+    stepsInput.value = 1;
+  }
 });
 
 // ── Source upload ──
@@ -607,14 +749,25 @@ function updateRunButton() {
 runBtn.addEventListener('click', async () => {
   if (!selectedTarget || !sourceFile) return;
 
+  const method = document.getElementById('method').value;
   runBtn.disabled = true;
   document.getElementById('progress').classList.add('active');
   document.getElementById('results').classList.remove('active');
 
+  // Update progress text based on method
+  const progressText = document.getElementById('progress-text');
+  if (method === 'ensemble') {
+    progressText.textContent = 'Атакуем ансамбль из 3 нейросетей... Это может занять 30-90 секунд.';
+  } else if (method === 'pgd') {
+    progressText.textContent = 'Атакуем ResNet-50... Это может занять 10-30 секунд.';
+  } else {
+    progressText.textContent = 'Выполняем FGSM атаку...';
+  }
+
   const formData = new FormData();
   formData.append('source_image', sourceFile);
   formData.append('target_class', selectedTarget);
-  formData.append('method', document.getElementById('method').value);
+  formData.append('method', method);
   formData.append('epsilon', document.getElementById('epsilon').value);
   formData.append('steps', document.getElementById('steps').value);
 
@@ -629,12 +782,18 @@ runBtn.addEventListener('click', async () => {
 
     // Status
     const statusEl = document.getElementById('result-status');
-    if (data.success) {
+    const fooled = data.models_fooled;
+    const total = data.models_total;
+
+    if (fooled === total) {
       statusEl.className = 'result-status success';
-      statusEl.textContent = `Атака успешна! Нейросеть теперь видит "${data.result_label}" вместо "${data.source_label}"`;
+      statusEl.textContent = `Все ${total} модели обмануты! Все видят "${data.target_label}" вместо "${data.source_label}"`;
+    } else if (fooled > 0) {
+      statusEl.className = 'result-status partial';
+      statusEl.textContent = `Обмануто ${fooled} из ${total} моделей. Цель: "${data.target_label}". Попробуйте увеличить epsilon или шаги.`;
     } else {
       statusEl.className = 'result-status fail';
-      statusEl.textContent = `Атака не достигла цели. Результат: "${data.result_label}" (цель: "${data.target_label}"). Попробуйте увеличить epsilon или шаги.`;
+      statusEl.textContent = `Ни одна модель не обманута. Цель: "${data.target_label}". Увеличьте epsilon и шаги.`;
     }
 
     // Images
@@ -648,6 +807,21 @@ runBtn.addEventListener('click', async () => {
     document.getElementById('res-result-label').textContent = data.result_label;
     document.getElementById('res-result-conf').textContent  = data.result_confidence + '%';
     document.getElementById('res-noise-info').textContent   = `L\u221E = ${data.noise_l_inf}`;
+
+    // Model verification
+    const modelContainer = document.getElementById('model-verify-container');
+    modelContainer.innerHTML = '';
+    data.model_results.forEach(m => {
+      const statusClass = m.fooled ? 'fooled' : 'not-fooled';
+      const statusIcon = m.fooled ? '\u2713' : '\u2717';
+      modelContainer.innerHTML += `
+        <div class="model-row">
+          <div class="model-status ${statusClass}">${statusIcon}</div>
+          <div class="model-name">${m.name}</div>
+          <div class="model-prediction">&#8594; ${m.label}</div>
+          <div class="model-conf-val">${m.confidence}%</div>
+        </div>`;
+    });
 
     // Top-5
     const top5 = document.getElementById('top5-container');
@@ -665,6 +839,7 @@ runBtn.addEventListener('click', async () => {
 
     // Stats
     document.getElementById('stat-method').textContent = data.method;
+    document.getElementById('stat-fooled').textContent = `${data.models_fooled}/${data.models_total}`;
     document.getElementById('stat-linf').textContent   = data.noise_l_inf;
     document.getElementById('stat-pixel').textContent   = data.max_pixel_change;
 

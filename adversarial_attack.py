@@ -7,6 +7,8 @@ can fool a neural network into misclassifying an image.
 Methods implemented:
   - FGSM  (Fast Gradient Sign Method)  — single-step attack
   - PGD   (Projected Gradient Descent)  — iterative attack (stronger)
+  - MI-FGSM (Momentum Iterative FGSM)  — better transferability
+  - Ensemble MI-DI-TI-FGSM            — best transferability across models
 
 Usage:
   python adversarial_attack.py --image couch.jpg --target 281
@@ -128,6 +130,96 @@ def pgd_targeted(model: torch.nn.Module, img: torch.Tensor,
         with torch.no_grad():
             adv = adv - alpha * adv.grad.sign()
             # Project back into ε-ball
+            delta = torch.clamp(adv - img, -epsilon, epsilon)
+            adv = torch.clamp(img + delta, 0, 1)
+
+    return adv.detach()
+
+
+# ── Transferability-enhancing techniques ──────────────────────────────────────
+
+def _input_diversity(x: torch.Tensor, prob: float = 0.7,
+                     low: int = 200, high: int = 224) -> torch.Tensor:
+    """DI-FGSM: random resize + pad to improve transfer (Xie et al., 2019)."""
+    if torch.rand(1).item() > prob:
+        return x
+    rnd = torch.randint(low, high, (1,)).item()
+    rescaled = F.interpolate(x, size=(rnd, rnd), mode='bilinear',
+                             align_corners=False)
+    pad_h = high - rnd
+    pad_w = high - rnd
+    pad_top = torch.randint(0, pad_h + 1, (1,)).item()
+    pad_left = torch.randint(0, pad_w + 1, (1,)).item()
+    padded = F.pad(rescaled,
+                   (pad_left, pad_w - pad_left, pad_top, pad_h - pad_top))
+    return padded
+
+
+def _gaussian_kernel(size: int = 5, sigma: float = 1.0) -> torch.Tensor:
+    """Create 2D Gaussian kernel for TI-FGSM (Dong et al., 2019)."""
+    coords = torch.arange(size, dtype=torch.float32) - size // 2
+    g = torch.exp(-(coords ** 2) / (2 * sigma ** 2))
+    kernel = g.outer(g)
+    kernel = kernel / kernel.sum()
+    return kernel.view(1, 1, size, size).repeat(3, 1, 1, 1)
+
+
+def ensemble_mi_di_ti_fgsm(
+    model_list: list[torch.nn.Module],
+    img: torch.Tensor,
+    target_class: int,
+    epsilon: float = 0.06,
+    alpha: float = 0.004,
+    steps: int = 100,
+    momentum: float = 1.0,
+    di_prob: float = 0.7,
+    ti_kernel_size: int = 5,
+) -> torch.Tensor:
+    """
+    Ensemble MI-DI-TI-FGSM (targeted).
+
+    Combines multiple techniques for maximum transferability:
+      - Ensemble: average gradients from multiple models
+      - MI: momentum to escape poor local optima (Dong et al., 2018)
+      - DI: input diversity via random resize+pad (Xie et al., 2019)
+      - TI: translation-invariant via Gaussian-smoothed gradients (Dong et al., 2019)
+    """
+    adv = img.clone()
+    grad_momentum = torch.zeros_like(img)
+
+    # Gaussian kernel for translation-invariant smoothing
+    ti_kernel = _gaussian_kernel(ti_kernel_size)
+
+    target_tensor = torch.tensor([target_class])
+
+    for step in range(steps):
+        adv.requires_grad_(True)
+        total_grad = torch.zeros_like(img)
+
+        for model in model_list:
+            # Apply input diversity
+            adv_di = _input_diversity(adv, prob=di_prob)
+            logits = model(normalise(adv_di))
+            loss = F.cross_entropy(logits, target_tensor)
+            model.zero_grad()
+            loss.backward()
+            total_grad += adv.grad.data.clone()
+            adv.grad.data.zero_()
+
+        # Average over ensemble
+        total_grad /= len(model_list)
+
+        # TI: smooth gradient with Gaussian kernel
+        total_grad = F.conv2d(total_grad, ti_kernel, padding=ti_kernel_size // 2,
+                              groups=3)
+
+        # MI: update momentum
+        grad_norm = total_grad / (total_grad.abs().mean(dim=[1, 2, 3], keepdim=True) + 1e-12)
+        grad_momentum = momentum * grad_momentum + grad_norm
+
+        with torch.no_grad():
+            # Targeted: move against gradient to minimise loss for target class
+            adv = adv - alpha * grad_momentum.sign()
             delta = torch.clamp(adv - img, -epsilon, epsilon)
             adv = torch.clamp(img + delta, 0, 1)
 

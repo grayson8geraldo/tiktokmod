@@ -4,6 +4,10 @@ Adversarial Attack — Web Application
 Flask web app: pick a target class, upload a source image,
 make the source "become" the target in the eyes of a neural network.
 
+Supports:
+  - Single-model PGD/FGSM (fast, fools ResNet-50 only)
+  - Ensemble MI-DI-TI-FGSM (slower, better transferability across models)
+
 Usage:
   python webapp.py
   Then open http://localhost:5000 in your browser.
@@ -27,6 +31,7 @@ from adversarial_attack import (
     normalise,
     pgd_targeted,
     fgsm_targeted,
+    ensemble_mi_di_ti_fgsm,
 )
 
 app = Flask(__name__)
@@ -52,11 +57,23 @@ PRESET_TARGETS = [
     {"idx": 113, "name": "Улитка", "icon": "🐌"},
 ]
 
-# ── Load model & labels once at startup ──────────────────────────────────────
+# ── Load models & labels at startup ─────────────────────────────────────────
 
 print("[*] Loading ResNet-50 …")
-MODEL = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-MODEL.eval()
+resnet50 = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+resnet50.eval()
+
+print("[*] Loading VGG-16 …")
+vgg16 = models.vgg16(weights=models.VGG16_Weights.DEFAULT)
+vgg16.eval()
+
+print("[*] Loading DenseNet-121 …")
+densenet121 = models.densenet121(weights=models.DenseNet121_Weights.DEFAULT)
+densenet121.eval()
+
+ENSEMBLE = [resnet50, vgg16, densenet121]
+# Default single model for fast mode
+MODEL = resnet50
 
 print("[*] Loading ImageNet labels …")
 LABELS = load_imagenet_labels()
@@ -81,10 +98,12 @@ def load_image_preserve_aspect(file_storage, size: int = 224) -> torch.Tensor:
     return transform(img).unsqueeze(0)  # 1×3×224×224
 
 
-def classify(img_tensor: torch.Tensor) -> list[dict]:
+def classify(img_tensor: torch.Tensor, model=None) -> list[dict]:
     """Return top-5 predictions as list of {idx, label, confidence}."""
+    if model is None:
+        model = MODEL
     with torch.no_grad():
-        logits = MODEL(normalise(img_tensor))
+        logits = model(normalise(img_tensor))
     probs = F.softmax(logits, dim=1)
     top5_conf, top5_idx = torch.topk(probs, 5, dim=1)
 
@@ -143,8 +162,7 @@ def index():
 def transform():
     """
     Accept uploaded source image + target class index + settings.
-    1) Attack the source image to be classified as the target class.
-    2) Return results as JSON with base64-encoded images.
+    Run adversarial attack and return results as JSON.
     """
     global _last_result_png
 
@@ -157,9 +175,9 @@ def transform():
         return jsonify({"error": "Выберите целевой класс."}), 400
 
     target_class_idx = int(target_class_idx)
-    method = request.form.get("method", "pgd")
-    epsilon = float(request.form.get("epsilon", "0.03"))
-    steps = int(request.form.get("steps", "40"))
+    method = request.form.get("method", "ensemble")
+    epsilon = float(request.form.get("epsilon", "0.06"))
+    steps = int(request.form.get("steps", "100"))
 
     target_label = LABELS[target_class_idx]
 
@@ -174,16 +192,41 @@ def transform():
     # Run adversarial attack
     if method == "fgsm":
         adv_tensor = fgsm_targeted(MODEL, source_tensor, target_class_idx, epsilon)
-    else:
+    elif method == "pgd":
         adv_tensor = pgd_targeted(
             MODEL, source_tensor, target_class_idx, epsilon, steps=steps
         )
+    else:
+        # Ensemble MI-DI-TI-FGSM — best transferability
+        adv_tensor = ensemble_mi_di_ti_fgsm(
+            ENSEMBLE, source_tensor, target_class_idx,
+            epsilon=epsilon, steps=steps,
+        )
 
-    # Classify result
-    adv_preds = classify(adv_tensor)
-    adv_label = adv_preds[0]["label"]
-    adv_conf = adv_preds[0]["confidence"]
-    success = adv_preds[0]["idx"] == target_class_idx
+    # Classify result on ALL models
+    adv_preds_resnet = classify(adv_tensor, resnet50)
+    adv_preds_vgg = classify(adv_tensor, vgg16)
+    adv_preds_densenet = classify(adv_tensor, densenet121)
+
+    adv_label = adv_preds_resnet[0]["label"]
+    adv_conf = adv_preds_resnet[0]["confidence"]
+    success = adv_preds_resnet[0]["idx"] == target_class_idx
+
+    # Check how many models are fooled
+    models_fooled = 0
+    model_results = []
+    for name, preds in [("ResNet-50", adv_preds_resnet),
+                        ("VGG-16", adv_preds_vgg),
+                        ("DenseNet-121", adv_preds_densenet)]:
+        fooled = preds[0]["idx"] == target_class_idx
+        if fooled:
+            models_fooled += 1
+        model_results.append({
+            "name": name,
+            "label": preds[0]["label"],
+            "confidence": preds[0]["confidence"],
+            "fooled": fooled,
+        })
 
     # Save result for download
     _last_result_png = tensor_to_png_bytes(adv_tensor)
@@ -195,6 +238,9 @@ def transform():
 
     return jsonify({
         "success": success,
+        "models_fooled": models_fooled,
+        "models_total": 3,
+        "model_results": model_results,
         # Target info
         "target_label": target_label,
         # Source image info (before attack)
@@ -206,8 +252,8 @@ def transform():
         "result_confidence": adv_conf,
         "result_image": tensor_to_base64(adv_tensor),
         "noise_image": noise_to_base64(source_tensor, adv_tensor),
-        # Top-5 predictions after attack
-        "result_top5": adv_preds,
+        # Top-5 predictions after attack (ResNet-50)
+        "result_top5": adv_preds_resnet,
         # Stats
         "noise_l_inf": round(l_inf, 4),
         "noise_l_2": round(l_2, 4),
