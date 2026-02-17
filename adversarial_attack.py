@@ -22,6 +22,7 @@ ImageNet class indices reference:
 """
 
 import argparse
+import io
 import json
 import sys
 from pathlib import Path
@@ -186,6 +187,80 @@ def _gaussian_kernel(size: int = 5, sigma: float = 1.0) -> torch.Tensor:
     return kernel.view(1, 1, size, size).repeat(3, 1, 1, 1)
 
 
+# ── Compression-robust augmentations ─────────────────────────────────────────
+
+def _jpeg_compress_ste(x: torch.Tensor, quality: int = 75) -> torch.Tensor:
+    """
+    Apply real JPEG compression with Straight-Through Estimator.
+    Forward pass: actual JPEG compression (non-differentiable).
+    Backward pass: gradient passes straight through (identity).
+    """
+    from PIL import Image as _PILImage
+
+    with torch.no_grad():
+        dev = x.device
+        img_np = x.squeeze(0).permute(1, 2, 0).clamp(0, 1).cpu().numpy()
+        img_np = (img_np * 255).astype(np.uint8)
+        pil_img = _PILImage.fromarray(img_np)
+
+        buf = io.BytesIO()
+        pil_img.save(buf, format="JPEG", quality=quality)
+        buf.seek(0)
+        compressed = _PILImage.open(buf).convert("RGB")
+
+        comp_np = np.array(compressed).astype(np.float32) / 255.0
+        comp_tensor = torch.from_numpy(comp_np).permute(2, 0, 1).unsqueeze(0).to(dev)
+
+    # STE: use compressed result for forward, pass gradient straight through
+    return x + (comp_tensor - x).detach()
+
+
+def _gaussian_blur_tensor(x: torch.Tensor, kernel_size: int = 5,
+                          sigma: float = 1.0) -> torch.Tensor:
+    """Apply Gaussian blur to a tensor (differentiable)."""
+    k = _gaussian_kernel(kernel_size, sigma).to(x.device)
+    return F.conv2d(x, k, padding=kernel_size // 2, groups=3)
+
+
+def _random_resize_ste(x: torch.Tensor, min_scale: float = 0.6,
+                       max_scale: float = 0.9) -> torch.Tensor:
+    """Random downscale then upscale to simulate re-encoding resolution loss."""
+    _, _, h, w = x.shape
+    scale = min_scale + torch.rand(1).item() * (max_scale - min_scale)
+    sh, sw = int(h * scale), int(w * scale)
+    with torch.no_grad():
+        down = F.interpolate(x, size=(sh, sw), mode='bilinear', align_corners=False)
+        up = F.interpolate(down, size=(h, w), mode='bilinear', align_corners=False)
+    return x + (up - x).detach()
+
+
+def _social_media_augment(x: torch.Tensor, jpeg_range: tuple = (60, 95),
+                          blur_prob: float = 0.3,
+                          resize_prob: float = 0.3) -> torch.Tensor:
+    """
+    Random augmentation simulating social media upload pipeline:
+    - JPEG compression (always, random quality 60-95)
+    - Gaussian blur (30% chance, sigma 0.5-1.5)
+    - Resize down+up (30% chance, scale 0.6-0.9)
+
+    All use STE so gradients flow back for adversarial optimization.
+    """
+    # Always apply JPEG — this is what kills noise in practice
+    q = torch.randint(jpeg_range[0], jpeg_range[1] + 1, (1,)).item()
+    x = _jpeg_compress_ste(x, quality=q)
+
+    # Random blur
+    if torch.rand(1).item() < blur_prob:
+        sigma = 0.5 + torch.rand(1).item() * 1.0
+        x = _gaussian_blur_tensor(x, kernel_size=5, sigma=sigma)
+
+    # Random resize
+    if torch.rand(1).item() < resize_prob:
+        x = _random_resize_ste(x)
+
+    return x
+
+
 def ensemble_mi_di_ti_fgsm(
     model_list: list[torch.nn.Module],
     img: torch.Tensor,
@@ -199,6 +274,7 @@ def ensemble_mi_di_ti_fgsm(
     progress_callback=None,
     init_delta: torch.Tensor | None = None,
     cancel_flag: list | None = None,
+    compression_robust: bool = False,
 ) -> torch.Tensor:
     """
     Ensemble MI-DI-TI-FGSM (targeted).
@@ -208,6 +284,12 @@ def ensemble_mi_di_ti_fgsm(
       - MI: momentum to escape poor local optima (Dong et al., 2018)
       - DI: input diversity via random resize+pad (Xie et al., 2019)
       - TI: translation-invariant via Gaussian-smoothed gradients (Dong et al., 2019)
+
+    When compression_robust=True, additionally:
+      - Simulates JPEG compression (quality 60-95) at each step (STE)
+      - Random Gaussian blur and resize augmentation
+      - Forces noise into low-frequency bands that survive social media recompression
+      This makes the attack effective even after TikTok re-encodes the video/image.
 
     If init_delta is provided, start from img+init_delta (warm-start).
     Pass cancel_flag=[False] — set cancel_flag[0]=True to abort early.
@@ -224,6 +306,10 @@ def ensemble_mi_di_ti_fgsm(
     ti_kernel = _gaussian_kernel(ti_kernel_size).to(dev)
     target_tensor = torch.tensor([target_class], device=dev)
 
+    # For compression-robust mode: low-frequency noise enforcement kernel
+    if compression_robust:
+        lf_kernel = _gaussian_kernel(7, sigma=1.5).to(dev)
+
     for step in range(steps):
         if cancel_flag and cancel_flag[0]:
             break
@@ -233,8 +319,14 @@ def ensemble_mi_di_ti_fgsm(
         total_grad = torch.zeros_like(img_d)
 
         for model in model_list:
-            adv_di = _input_diversity(adv, prob=di_prob)
-            logits = model(normalise(adv_di))
+            # Standard DI augmentation
+            adv_aug = _input_diversity(adv, prob=di_prob)
+
+            # Compression-robust: simulate social media pipeline
+            if compression_robust:
+                adv_aug = _social_media_augment(adv_aug)
+
+            logits = model(normalise(adv_aug))
             loss = F.cross_entropy(logits, target_tensor)
             model.zero_grad()
             loss.backward()
@@ -243,15 +335,23 @@ def ensemble_mi_di_ti_fgsm(
 
         total_grad /= len(model_list)
 
+        # TI: smooth gradient
         total_grad = F.conv2d(total_grad, ti_kernel, padding=ti_kernel_size // 2,
                               groups=3)
 
+        # MI: update momentum
         grad_norm = total_grad / (total_grad.abs().mean(dim=[1, 2, 3], keepdim=True) + 1e-12)
         grad_momentum = momentum * grad_momentum + grad_norm
 
         with torch.no_grad():
             adv = adv - alpha * grad_momentum.sign()
             delta = torch.clamp(adv - img_d, -epsilon, epsilon)
+
+            # Compression-robust: force noise into low frequencies
+            if compression_robust:
+                delta = F.conv2d(delta, lf_kernel, padding=3, groups=3)
+                delta = torch.clamp(delta, -epsilon, epsilon)
+
             adv = torch.clamp(img_d + delta, 0, 1)
 
     return adv.detach().cpu()

@@ -259,6 +259,7 @@ def transform():
     method = request.form.get("method", "ensemble")
     epsilon = float(request.form.get("epsilon", "0.06"))
     steps = int(request.form.get("steps", "120"))
+    robust = request.form.get("robust", "false") == "true"
 
     cancel_flag = [False]
     task_id = str(uuid.uuid4())
@@ -312,6 +313,7 @@ def transform():
                     epsilon=epsilon, steps=steps,
                     progress_callback=on_progress,
                     cancel_flag=cancel_flag,
+                    compression_robust=robust,
                 )
 
             if cancel_flag[0]:
@@ -382,6 +384,7 @@ def transform():
                 "output_resolution": f"{orig_w}x{orig_h}",
                 "elapsed_sec": elapsed,
                 "device": str(DEVICE),
+                "robust": robust,
             }
             task["status"] = "done"
             task["phase"] = "done"
@@ -493,6 +496,7 @@ def transform_video():
     mode = request.form.get("video_mode", "fast")
     epsilon = float(request.form.get("epsilon", "0.06"))
     steps = int(request.form.get("steps", "120"))
+    robust = request.form.get("robust", "true") == "true"  # default ON for video
 
     cancel_flag = [False]
     task_id = str(uuid.uuid4())
@@ -541,6 +545,7 @@ def transform_video():
                     steps_warm=max(20, steps // 4),
                     keyframe_fps=2.0,
                     progress_callback=on_progress,
+                    compression_robust=robust,
                 )
             else:
                 result_bytes = attack_video_fast(
@@ -548,6 +553,7 @@ def transform_video():
                     epsilon=epsilon,
                     steps=steps,
                     progress_callback=on_progress,
+                    compression_robust=robust,
                 )
 
             elapsed = round(time.time() - task["created"], 1)

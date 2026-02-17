@@ -620,6 +620,13 @@
           <label>Шаги итераций</label>
           <input type="number" id="steps" value="120" min="10" max="500">
         </div>
+        <div class="field" style="display:flex;align-items:center;gap:10px;padding-top:20px;">
+          <label style="margin:0;white-space:nowrap;cursor:pointer;" for="robust-img">
+            <input type="checkbox" id="robust-img" style="width:auto;margin-right:6px;">
+            Устойчивость к сжатию
+          </label>
+          <span style="font-size:0.75em;color:var(--text-dim);">JPEG-симуляция в цикле атаки. Медленнее, но шум выживает после пережатия (TikTok, Instagram).</span>
+        </div>
         <div class="method-hint" id="method-hint">
           TikTok Ensemble: атака по 5 моделям одновременно (ResNet-50 + EfficientNet-V2 +
           Swin-T + ViT-B/16 + ConvNeXt). Покрывает CNN и Transformer архитектуры.
@@ -658,15 +665,22 @@
           <label>Epsilon (сила шума)</label>
           <select id="video-epsilon">
             <option value="0.03">0.03 — тонкий</option>
-            <option value="0.06" selected>0.06 — баланс</option>
-            <option value="0.10">0.10 — сильный</option>
+            <option value="0.06">0.06 — баланс</option>
+            <option value="0.10" selected>0.10 — сильный (рекомендуется)</option>
             <option value="0.16">0.16 — агрессивный</option>
           </select>
         </div>
         <div class="field">
           <label>Шаги итераций</label>
-          <input type="number" id="video-steps" value="120" min="10" max="500">
+          <input type="number" id="video-steps" value="200" min="10" max="500">
         </div>
+      </div>
+      <div style="margin-top:12px;display:flex;align-items:center;gap:10px;">
+        <label style="margin:0;white-space:nowrap;cursor:pointer;font-size:0.85em;" for="robust-video">
+          <input type="checkbox" id="robust-video" checked style="width:auto;margin-right:6px;">
+          Устойчивость к сжатию (рекомендуется)
+        </label>
+        <span style="font-size:0.75em;color:var(--text-dim);">Шум выживает после пережатия TikTok/H.264. Медленнее в ~2x.</span>
       </div>
     </div>
   </div>
@@ -1137,12 +1151,14 @@ runBtn.addEventListener('click', async () => {
     formData.append('video_mode', selectedVideoMode);
     formData.append('epsilon', document.getElementById('video-epsilon').value);
     formData.append('steps', document.getElementById('video-steps').value);
+    formData.append('robust', document.getElementById('robust-video').checked ? 'true' : 'false');
   } else {
     url = '/transform';
     formData.append('source_image', sourceFile);
     formData.append('method', document.getElementById('method').value);
     formData.append('epsilon', document.getElementById('epsilon').value);
     formData.append('steps', document.getElementById('steps').value);
+    formData.append('robust', document.getElementById('robust-img').checked ? 'true' : 'false');
   }
 
   try {

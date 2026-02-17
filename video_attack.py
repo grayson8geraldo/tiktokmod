@@ -102,6 +102,7 @@ def attack_video_fast(
     epsilon: float = 0.06,
     steps: int = 120,
     progress_callback=None,
+    compression_robust: bool = True,
 ) -> bytes:
     """
     Fast video attack: compute noise on one representative frame,
@@ -128,6 +129,7 @@ def attack_video_fast(
         ensemble, mid_224, target_class,
         epsilon=epsilon, steps=steps,
         progress_callback=on_step,
+        compression_robust=compression_robust,
     )
 
     # Compute noise at 224x224, upscale to full resolution
@@ -175,6 +177,7 @@ def attack_video_warmstart(
     steps_warm: int = 30,
     keyframe_fps: float = 2.0,
     progress_callback=None,
+    compression_robust: bool = True,
 ) -> bytes:
     """
     Quality video attack with warm-start:
@@ -222,6 +225,7 @@ def attack_video_warmstart(
             epsilon=epsilon, steps=n_steps,
             progress_callback=on_step,
             init_delta=prev_delta,
+            compression_robust=compression_robust,
         )
 
         delta = adv_224 - frame_224
