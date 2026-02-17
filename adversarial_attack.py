@@ -178,6 +178,7 @@ def ensemble_mi_di_ti_fgsm(
     di_prob: float = 0.7,
     ti_kernel_size: int = 5,
     progress_callback=None,
+    init_delta: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
     Ensemble MI-DI-TI-FGSM (targeted).
@@ -187,8 +188,13 @@ def ensemble_mi_di_ti_fgsm(
       - MI: momentum to escape poor local optima (Dong et al., 2018)
       - DI: input diversity via random resize+pad (Xie et al., 2019)
       - TI: translation-invariant via Gaussian-smoothed gradients (Dong et al., 2019)
+
+    If init_delta is provided, start from img+init_delta (warm-start).
     """
-    adv = img.clone()
+    if init_delta is not None:
+        adv = torch.clamp(img + init_delta, 0, 1)
+    else:
+        adv = img.clone()
     grad_momentum = torch.zeros_like(img)
 
     # Gaussian kernel for translation-invariant smoothing

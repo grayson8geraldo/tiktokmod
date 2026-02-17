@@ -523,6 +523,109 @@
     margin-top: 4px;
   }
 
+  /* ── Tab switcher ── */
+  .tab-switcher {
+    display: flex;
+    gap: 0;
+    margin-bottom: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .tab-btn {
+    flex: 1;
+    padding: 14px;
+    font-size: 1em;
+    font-weight: 600;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+    text-align: center;
+  }
+
+  .tab-btn:hover {
+    background: rgba(108, 92, 231, 0.08);
+  }
+
+  .tab-btn.active {
+    background: rgba(108, 92, 231, 0.15);
+    color: var(--accent);
+    box-shadow: inset 0 -3px 0 var(--accent);
+  }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* ── Video mode selector ── */
+  .video-mode-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .video-mode-btn {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    color: var(--text);
+    text-align: left;
+  }
+
+  .video-mode-btn:hover {
+    border-color: var(--accent);
+    background: #1e1e2e;
+  }
+
+  .video-mode-btn.selected {
+    border-color: var(--accent);
+    background: rgba(108, 92, 231, 0.15);
+  }
+
+  .video-mode-btn .mode-title {
+    font-weight: 600;
+    font-size: 1em;
+    margin-bottom: 4px;
+  }
+
+  .video-mode-btn .mode-desc {
+    font-size: 0.8em;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+
+  /* ── Video results ── */
+  .video-result-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    text-align: center;
+    margin-bottom: 24px;
+  }
+
+  .video-result-card video {
+    max-width: 100%;
+    max-height: 400px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    background: #111;
+  }
+
+  .video-result-info {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    text-align: center;
+  }
+
   /* ── Warning ── */
   .warning-box {
     background: rgba(253, 203, 110, 0.08);
@@ -557,6 +660,12 @@
     Swin-T (Video Swin), ViT-B/16 (BEiT3), ConvNeXt (доп. backbone).
   </p>
 
+  <!-- Tab switcher -->
+  <div class="tab-switcher">
+    <button class="tab-btn active" data-tab="image">Изображение</button>
+    <button class="tab-btn" data-tab="video">Видео</button>
+  </div>
+
   <!-- Target class presets -->
   <div class="section-title">1. Выберите целевой класс (во что превратить)</div>
   <div class="preset-grid" id="preset-grid">
@@ -568,45 +677,90 @@
     {% endfor %}
   </div>
 
-  <!-- Source image upload -->
-  <div class="section-title">2. Загрузите исходное изображение</div>
-  <div class="upload-card" id="source-card">
-    <input type="file" id="source-input" accept="image/*">
-    <div class="placeholder" id="source-placeholder">
-      <div class="icon">&#128444;&#65039;</div>
-      <div class="label">Исходное изображение</div>
-      <div class="hint">Перетащите или нажмите, чтобы выбрать файл</div>
+  <!-- IMAGE TAB -->
+  <div class="tab-content active" id="tab-image">
+    <div class="section-title">2. Загрузите исходное изображение</div>
+    <div class="upload-card" id="source-card">
+      <input type="file" id="source-input" accept="image/*">
+      <div class="placeholder" id="source-placeholder">
+        <div class="icon">&#128444;&#65039;</div>
+        <div class="label">Исходное изображение</div>
+        <div class="hint">Перетащите или нажмите, чтобы выбрать файл</div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="settings">
+      <h3>Настройки атаки</h3>
+      <div class="settings-grid">
+        <div class="field">
+          <label>Метод</label>
+          <select id="method">
+            <option value="ensemble" selected>TikTok Ensemble (5 моделей, MI-DI-TI)</option>
+            <option value="pgd">PGD (только ResNet-50)</option>
+            <option value="fgsm">FGSM (быстрый, слабый)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Epsilon (сила шума)</label>
+          <select id="epsilon">
+            <option value="0.03">0.03 — тонкий</option>
+            <option value="0.06" selected>0.06 — баланс (рекомендуется)</option>
+            <option value="0.10">0.10 — сильный</option>
+            <option value="0.16">0.16 — агрессивный (заметный)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Шаги итераций</label>
+          <input type="number" id="steps" value="120" min="10" max="500">
+        </div>
+        <div class="method-hint" id="method-hint">
+          TikTok Ensemble: атака по 5 моделям одновременно (ResNet-50 + EfficientNet-V2 +
+          Swin-T + ViT-B/16 + ConvNeXt). Покрывает CNN и Transformer архитектуры из стека TikTok.
+        </div>
+      </div>
     </div>
   </div>
 
-  <!-- Settings -->
-  <div class="settings">
-    <h3>Настройки атаки</h3>
-    <div class="settings-grid">
-      <div class="field">
-        <label>Метод</label>
-        <select id="method">
-          <option value="ensemble" selected>TikTok Ensemble (5 моделей, MI-DI-TI)</option>
-          <option value="pgd">PGD (только ResNet-50)</option>
-          <option value="fgsm">FGSM (быстрый, слабый)</option>
-        </select>
+  <!-- VIDEO TAB -->
+  <div class="tab-content" id="tab-video">
+    <div class="section-title">2. Загрузите видео</div>
+    <div class="upload-card" id="video-card">
+      <input type="file" id="video-input" accept="video/*">
+      <div class="placeholder" id="video-placeholder">
+        <div class="icon">&#127909;</div>
+        <div class="label">Видеофайл (MP4)</div>
+        <div class="hint">Перетащите или нажмите, чтобы выбрать файл. Рекомендуется до 30 сек.</div>
       </div>
-      <div class="field">
-        <label>Epsilon (сила шума)</label>
-        <select id="epsilon">
-          <option value="0.03">0.03 — тонкий</option>
-          <option value="0.06" selected>0.06 — баланс (рекомендуется)</option>
-          <option value="0.10">0.10 — сильный</option>
-          <option value="0.16">0.16 — агрессивный (заметный)</option>
-        </select>
+    </div>
+
+    <!-- Video mode -->
+    <div class="settings">
+      <h3>Режим обработки видео</h3>
+      <div class="video-mode-grid">
+        <div class="video-mode-btn selected" data-mode="fast">
+          <div class="mode-title">Быстрый</div>
+          <div class="mode-desc">Атакуется один кадр, шум применяется ко всем. ~3-5 мин.</div>
+        </div>
+        <div class="video-mode-btn" data-mode="quality">
+          <div class="mode-title">Качественный (warm-start)</div>
+          <div class="mode-desc">Атакуются ключевые кадры, шум интерполируется. ~15-40 мин.</div>
+        </div>
       </div>
-      <div class="field">
-        <label>Шаги итераций</label>
-        <input type="number" id="steps" value="120" min="10" max="500">
-      </div>
-      <div class="method-hint" id="method-hint">
-        TikTok Ensemble: атака по 5 моделям одновременно (ResNet-50 + EfficientNet-V2 +
-        Swin-T + ViT-B/16 + ConvNeXt). Покрывает CNN и Transformer архитектуры из стека TikTok.
+      <div class="settings-grid">
+        <div class="field">
+          <label>Epsilon (сила шума)</label>
+          <select id="video-epsilon">
+            <option value="0.03">0.03 — тонкий</option>
+            <option value="0.06" selected>0.06 — баланс (рекомендуется)</option>
+            <option value="0.10">0.10 — сильный</option>
+            <option value="0.16">0.16 — агрессивный (заметный)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Шаги итераций</label>
+          <input type="number" id="video-steps" value="120" min="10" max="500">
+        </div>
       </div>
     </div>
   </div>
@@ -700,9 +854,51 @@
       </div>
     </div>
   </div>
+
+  <!-- Video results -->
+  <div class="results" id="video-results">
+    <div class="result-status success" id="video-result-status"></div>
+
+    <a class="btn-download" id="video-download-btn" href="/download_video" download="adversarial_video.mp4">
+      Скачать видео (MP4)
+    </a>
+
+    <div class="stats" id="video-stats">
+      <div>
+        <div class="stat-value" id="vstat-mode"></div>
+        <div class="stat-label">Режим</div>
+      </div>
+      <div>
+        <div class="stat-value" id="vstat-epsilon"></div>
+        <div class="stat-label">Epsilon</div>
+      </div>
+      <div>
+        <div class="stat-value" id="vstat-steps"></div>
+        <div class="stat-label">Шаги</div>
+      </div>
+      <div>
+        <div class="stat-value" id="vstat-size"></div>
+        <div class="stat-label">Размер файла</div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
+// ── Tab switching ──
+let activeTab = 'image';
+const tabBtns = document.querySelectorAll('.tab-btn');
+tabBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    activeTab = btn.dataset.tab;
+    tabBtns.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.getElementById('tab-' + activeTab).classList.add('active');
+    updateRunButton();
+  });
+});
+
 // ── Preset selection ──
 const presetBtns = document.querySelectorAll('.preset-btn');
 let selectedTarget = null;
@@ -727,7 +923,6 @@ const hints = {
 
 methodSelect.addEventListener('change', () => {
   methodHint.textContent = hints[methodSelect.value] || '';
-  // Update default steps
   const stepsInput = document.getElementById('steps');
   if (methodSelect.value === 'ensemble') {
     stepsInput.value = 120;
@@ -738,7 +933,18 @@ methodSelect.addEventListener('change', () => {
   }
 });
 
-// ── Source upload ──
+// ── Video mode selection ──
+let selectedVideoMode = 'fast';
+const videoModeBtns = document.querySelectorAll('.video-mode-btn');
+videoModeBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    videoModeBtns.forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    selectedVideoMode = btn.dataset.mode;
+  });
+});
+
+// ── Source image upload ──
 const sourceInput = document.getElementById('source-input');
 const sourceCard  = document.getElementById('source-card');
 const runBtn      = document.getElementById('run-btn');
@@ -768,8 +974,40 @@ function attachSourceUpload(input) {
 
 attachSourceUpload(sourceInput);
 
+// ── Video upload ──
+const videoInput = document.getElementById('video-input');
+const videoCard = document.getElementById('video-card');
+let videoFile = null;
+
+function attachVideoUpload(input) {
+  input.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    videoFile = file;
+
+    videoCard.classList.add('has-image');
+    const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+    videoCard.innerHTML = `
+      <input type="file" accept="video/*">
+      <div style="padding:32px 24px;">
+        <div class="icon" style="font-size:2.5em;margin-bottom:8px;">&#127909;</div>
+        <div class="label" style="font-weight:600;margin-bottom:4px;">${file.name}</div>
+        <div class="hint" style="color:var(--text-dim);font-size:0.85em;">${sizeMB} МБ — нажмите чтобы заменить</div>
+      </div>
+    `;
+    attachVideoUpload(videoCard.querySelector('input[type="file"]'));
+    updateRunButton();
+  });
+}
+
+attachVideoUpload(videoInput);
+
 function updateRunButton() {
-  runBtn.disabled = !(selectedTarget && sourceFile);
+  if (activeTab === 'image') {
+    runBtn.disabled = !(selectedTarget && sourceFile);
+  } else {
+    runBtn.disabled = !(selectedTarget && videoFile);
+  }
 }
 
 // ── Phase labels ──
@@ -779,10 +1017,14 @@ const phaseLabels = {
   attacking: 'Атака нейросетей...',
   upscaling: 'Масштабирование шума на полное разрешение...',
   classifying: 'Проверка по всем моделям...',
+  extracting: 'Извлечение кадров из видео...',
+  interpolating: 'Интерполяция шума между ключевыми кадрами...',
+  applying: 'Наложение шума на кадры...',
+  saving: 'Сохранение видео...',
   done: 'Готово!'
 };
 
-// ── Display results ──
+// ── Display image results ──
 function showResults(data) {
   const statusEl = document.getElementById('result-status');
   const fooled = data.models_fooled;
@@ -845,8 +1087,23 @@ function showResults(data) {
   document.getElementById('results').classList.add('active');
 }
 
+// ── Display video results ──
+function showVideoResults(data) {
+  const statusEl = document.getElementById('video-result-status');
+  statusEl.className = 'result-status success';
+  statusEl.textContent = `Видео обработано! Целевой класс: "${data.target_label}"`;
+
+  const modeLabels = {fast: 'Быстрый', quality: 'Качественный'};
+  document.getElementById('vstat-mode').textContent = modeLabels[data.mode] || data.mode;
+  document.getElementById('vstat-epsilon').textContent = data.epsilon;
+  document.getElementById('vstat-steps').textContent = data.steps;
+  document.getElementById('vstat-size').textContent = data.video_size_kb + ' КБ';
+
+  document.getElementById('video-results').classList.add('active');
+}
+
 // ── Progress polling ──
-function pollProgress(taskId) {
+function pollProgress(taskId, isVideo) {
   const progressBar = document.getElementById('progress-bar');
   const progressPercent = document.getElementById('progress-percent');
   const progressText = document.getElementById('progress-text');
@@ -861,7 +1118,9 @@ function pollProgress(taskId) {
         const pct = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 0;
         progressBar.style.width = pct + '%';
         progressPercent.textContent = pct + '%';
-        progressText.textContent = `Шаг ${data.progress} / ${data.total}`;
+        let stepText = `Шаг ${data.progress} / ${data.total}`;
+        if (data.extra) stepText += ` (${data.extra})`;
+        progressText.textContent = stepText;
         progressPhase.textContent = phaseLabels[data.phase] || data.phase;
         setTimeout(poll, 300);
       } else if (data.status === 'done') {
@@ -871,12 +1130,16 @@ function pollProgress(taskId) {
         progressPhase.textContent = '';
         setTimeout(() => {
           document.getElementById('progress').classList.remove('active');
-          showResults(data.result);
+          if (isVideo) {
+            showVideoResults(data.result);
+          } else {
+            showResults(data.result);
+          }
           runBtn.disabled = false;
         }, 400);
       } else if (data.status === 'error') {
         document.getElementById('progress').classList.remove('active');
-        alert('Error: ' + (data.error || 'Unknown error'));
+        alert('Ошибка: ' + (data.error || 'Unknown error'));
         runBtn.disabled = false;
       }
     } catch (err) {
@@ -889,7 +1152,10 @@ function pollProgress(taskId) {
 
 // ── Run attack ──
 runBtn.addEventListener('click', async () => {
-  if (!selectedTarget || !sourceFile) return;
+  const isVideo = activeTab === 'video';
+
+  if (isVideo && (!selectedTarget || !videoFile)) return;
+  if (!isVideo && (!selectedTarget || !sourceFile)) return;
 
   runBtn.disabled = true;
 
@@ -900,16 +1166,28 @@ runBtn.addEventListener('click', async () => {
   document.getElementById('progress-phase').textContent = '';
   document.getElementById('progress').classList.add('active');
   document.getElementById('results').classList.remove('active');
+  document.getElementById('video-results').classList.remove('active');
 
   const formData = new FormData();
-  formData.append('source_image', sourceFile);
   formData.append('target_class', selectedTarget);
-  formData.append('method', document.getElementById('method').value);
-  formData.append('epsilon', document.getElementById('epsilon').value);
-  formData.append('steps', document.getElementById('steps').value);
+
+  let url;
+  if (isVideo) {
+    url = '/transform_video';
+    formData.append('source_video', videoFile);
+    formData.append('video_mode', selectedVideoMode);
+    formData.append('epsilon', document.getElementById('video-epsilon').value);
+    formData.append('steps', document.getElementById('video-steps').value);
+  } else {
+    url = '/transform';
+    formData.append('source_image', sourceFile);
+    formData.append('method', document.getElementById('method').value);
+    formData.append('epsilon', document.getElementById('epsilon').value);
+    formData.append('steps', document.getElementById('steps').value);
+  }
 
   try {
-    const resp = await fetch('/transform', { method: 'POST', body: formData });
+    const resp = await fetch(url, { method: 'POST', body: formData });
     const data = await resp.json();
 
     if (data.error) {
@@ -919,12 +1197,11 @@ runBtn.addEventListener('click', async () => {
       return;
     }
 
-    // Start polling
-    pollProgress(data.task_id);
+    pollProgress(data.task_id, isVideo);
 
   } catch (err) {
     document.getElementById('progress').classList.remove('active');
-    alert('Error: ' + err.message);
+    alert('Ошибка: ' + err.message);
     runBtn.disabled = false;
   }
 });

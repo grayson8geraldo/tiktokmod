@@ -36,6 +36,7 @@ from adversarial_attack import (
     fgsm_targeted,
     ensemble_mi_di_ti_fgsm,
 )
+from video_attack import attack_video_fast, attack_video_warmstart
 
 app = Flask(__name__)
 
@@ -105,6 +106,7 @@ print(f"[✓] {len(ENSEMBLE)} models loaded — open http://localhost:5000")
 
 _tasks: dict = {}
 _last_result_png: bytes | None = None
+_last_result_video: bytes | None = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -361,12 +363,17 @@ def progress(task_id):
             "result": result,
         })
 
-    return jsonify({
+    resp = {
         "status": "running",
         "progress": task["progress"],
         "total": task["total"],
         "phase": task["phase"],
-    })
+    }
+    if task.get("extra"):
+        resp["extra"] = task["extra"]
+    if task.get("media_type"):
+        resp["media_type"] = task["media_type"]
+    return jsonify(resp)
 
 
 @app.route("/download")
@@ -377,6 +384,108 @@ def download():
     buf = io.BytesIO(_last_result_png)
     return send_file(buf, mimetype="image/png", as_attachment=True,
                      download_name="adversarial_result.png")
+
+
+@app.route("/transform_video", methods=["POST"])
+def transform_video():
+    """Start video adversarial attack in background thread. Returns task_id."""
+    global _last_result_video
+
+    source_file = request.files.get("source_video")
+    target_class_idx = request.form.get("target_class")
+
+    if not source_file:
+        return jsonify({"error": "Загрузите видео."}), 400
+    if target_class_idx is None:
+        return jsonify({"error": "Выберите целевой класс."}), 400
+
+    video_bytes = source_file.read()
+    target_class_idx = int(target_class_idx)
+    mode = request.form.get("video_mode", "fast")
+    epsilon = float(request.form.get("epsilon", "0.06"))
+    steps = int(request.form.get("steps", "120"))
+
+    task_id = str(uuid.uuid4())
+    _tasks[task_id] = {
+        "progress": 0,
+        "total": steps,
+        "phase": "starting",
+        "status": "running",
+        "result": None,
+        "media_type": "video",
+    }
+
+    def run_video_attack():
+        global _last_result_video
+        try:
+            task = _tasks[task_id]
+            target_label = LABELS[target_class_idx]
+
+            def on_progress(phase, frame_idx, total_frames, step, total_steps):
+                task["phase"] = phase
+                if phase == "attacking":
+                    task["progress"] = step
+                    task["total"] = total_steps
+                    task["extra"] = f"Кадр {frame_idx}/{total_frames}" if total_frames > 1 else ""
+                elif phase == "applying":
+                    task["progress"] = frame_idx
+                    task["total"] = total_frames
+                    task["extra"] = ""
+                elif phase == "interpolating":
+                    task["progress"] = 0
+                    task["total"] = total_frames
+                    task["extra"] = ""
+                elif phase in ("extracting", "saving"):
+                    task["extra"] = ""
+
+            if mode == "quality":
+                result_bytes = attack_video_warmstart(
+                    ENSEMBLE, video_bytes, target_class_idx,
+                    epsilon=epsilon,
+                    steps_first=steps,
+                    steps_warm=max(20, steps // 4),
+                    keyframe_fps=2.0,
+                    progress_callback=on_progress,
+                )
+            else:
+                result_bytes = attack_video_fast(
+                    ENSEMBLE, video_bytes, target_class_idx,
+                    epsilon=epsilon,
+                    steps=steps,
+                    progress_callback=on_progress,
+                )
+
+            _last_result_video = result_bytes
+
+            task["result"] = {
+                "success": True,
+                "target_label": target_label,
+                "mode": mode,
+                "epsilon": epsilon,
+                "steps": steps,
+                "video_size_kb": round(len(result_bytes) / 1024, 1),
+            }
+            task["status"] = "done"
+            task["phase"] = "done"
+
+        except Exception as e:
+            _tasks[task_id]["status"] = "error"
+            _tasks[task_id]["error"] = str(e)
+
+    thread = threading.Thread(target=run_video_attack, daemon=True)
+    thread.start()
+
+    return jsonify({"task_id": task_id})
+
+
+@app.route("/download_video")
+def download_video():
+    """Download the last generated adversarial video as MP4."""
+    if _last_result_video is None:
+        return "No video result available", 404
+    buf = io.BytesIO(_last_result_video)
+    return send_file(buf, mimetype="video/mp4", as_attachment=True,
+                     download_name="adversarial_video.mp4")
 
 
 if __name__ == "__main__":
