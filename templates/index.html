@@ -46,9 +46,62 @@
   .subtitle {
     text-align: center;
     color: var(--text-dim);
-    margin-bottom: 32px;
+    margin-bottom: 12px;
     font-size: 0.95em;
   }
+
+  /* ── Device badge ── */
+  .device-badge {
+    text-align: center;
+    margin-bottom: 24px;
+  }
+
+  .device-badge span {
+    display: inline-block;
+    padding: 4px 14px;
+    border-radius: 20px;
+    font-size: 0.78em;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+  }
+
+  .device-badge .gpu { background: rgba(0,184,148,0.15); color: var(--success); border: 1px solid rgba(0,184,148,0.3); }
+  .device-badge .cpu { background: rgba(253,203,110,0.15); color: var(--warn); border: 1px solid rgba(253,203,110,0.3); }
+
+  /* ── Tab switcher ── */
+  .tab-switcher {
+    display: flex;
+    gap: 0;
+    margin-bottom: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  .tab-btn {
+    flex: 1;
+    padding: 14px;
+    font-size: 1em;
+    font-weight: 600;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+    text-align: center;
+  }
+
+  .tab-btn:hover { background: rgba(108, 92, 231, 0.08); }
+
+  .tab-btn.active {
+    background: rgba(108, 92, 231, 0.15);
+    color: var(--accent);
+    box-shadow: inset 0 -3px 0 var(--accent);
+  }
+
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
 
   /* ── Target class selection ── */
   .section-title {
@@ -90,16 +143,8 @@
     box-shadow: 0 0 12px rgba(108, 92, 231, 0.3);
   }
 
-  .preset-btn .preset-icon {
-    font-size: 1.8em;
-    display: block;
-    margin-bottom: 4px;
-  }
-
-  .preset-btn .preset-name {
-    font-weight: 600;
-    font-size: 0.85em;
-  }
+  .preset-btn .preset-icon { font-size: 1.8em; display: block; margin-bottom: 4px; }
+  .preset-btn .preset-name { font-weight: 600; font-size: 0.85em; }
 
   /* ── Upload area ── */
   .upload-card {
@@ -115,9 +160,14 @@
     margin-bottom: 24px;
   }
 
-  .upload-card:hover {
+  .upload-card:hover, .upload-card.dragover {
     border-color: var(--accent);
     background: #1e1e2e;
+  }
+
+  .upload-card.dragover {
+    background: rgba(108, 92, 231, 0.1);
+    box-shadow: inset 0 0 30px rgba(108, 92, 231, 0.15);
   }
 
   .upload-card.has-image {
@@ -192,9 +242,7 @@
     outline: none;
   }
 
-  .field select:focus, .field input:focus {
-    border-color: var(--accent);
-  }
+  .field select:focus, .field input:focus { border-color: var(--accent); }
 
   .method-hint {
     font-size: 0.8em;
@@ -205,6 +253,35 @@
     border-radius: 8px;
     grid-column: 1 / -1;
   }
+
+  /* ── Video mode selector ── */
+  .video-mode-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .video-mode-btn {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    color: var(--text);
+    text-align: left;
+  }
+
+  .video-mode-btn:hover { border-color: var(--accent); background: #1e1e2e; }
+
+  .video-mode-btn.selected {
+    border-color: var(--accent);
+    background: rgba(108, 92, 231, 0.15);
+  }
+
+  .video-mode-btn .mode-title { font-weight: 600; font-size: 1em; margin-bottom: 4px; }
+  .video-mode-btn .mode-desc { font-size: 0.8em; color: var(--text-dim); line-height: 1.4; }
 
   /* ── Button ── */
   .btn-run {
@@ -222,15 +299,8 @@
     margin-bottom: 24px;
   }
 
-  .btn-run:hover:not(:disabled) {
-    opacity: 0.9;
-    transform: translateY(-1px);
-  }
-
-  .btn-run:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
+  .btn-run:hover:not(:disabled) { opacity: 0.9; transform: translateY(-1px); }
+  .btn-run:disabled { opacity: 0.4; cursor: not-allowed; }
 
   /* ── Progress ── */
   .progress {
@@ -269,22 +339,33 @@
     margin-bottom: 4px;
   }
 
-  .progress-text {
-    color: var(--text-dim);
-    font-size: 0.9em;
-  }
+  .progress-text { color: var(--text-dim); font-size: 0.9em; }
+  .progress-phase { color: var(--text-dim); font-size: 0.8em; margin-top: 6px; }
 
-  .progress-phase {
+  .progress-eta {
     color: var(--text-dim);
     font-size: 0.8em;
-    margin-top: 6px;
+    margin-top: 4px;
+    font-variant-numeric: tabular-nums;
   }
+
+  .btn-cancel {
+    margin-top: 16px;
+    padding: 8px 24px;
+    background: transparent;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 0.85em;
+    font-weight: 600;
+    transition: background 0.2s;
+  }
+
+  .btn-cancel:hover { background: rgba(225, 112, 85, 0.15); }
 
   /* ── Results ── */
-  .results {
-    display: none;
-  }
-
+  .results { display: none; }
   .results.active { display: block; }
 
   .result-status {
@@ -296,23 +377,9 @@
     font-size: 1.05em;
   }
 
-  .result-status.success {
-    background: rgba(0, 184, 148, 0.15);
-    border: 1px solid var(--success);
-    color: var(--success);
-  }
-
-  .result-status.partial {
-    background: rgba(253, 203, 110, 0.15);
-    border: 1px solid var(--warn);
-    color: var(--warn);
-  }
-
-  .result-status.fail {
-    background: rgba(225, 112, 85, 0.15);
-    border: 1px solid var(--danger);
-    color: var(--danger);
-  }
+  .result-status.success { background: rgba(0, 184, 148, 0.15); border: 1px solid var(--success); color: var(--success); }
+  .result-status.partial { background: rgba(253, 203, 110, 0.15); border: 1px solid var(--warn); color: var(--warn); }
+  .result-status.fail { background: rgba(225, 112, 85, 0.15); border: 1px solid var(--danger); color: var(--danger); }
 
   .result-grid {
     display: grid;
@@ -336,28 +403,10 @@
     background: #111;
   }
 
-  .result-card .info {
-    padding: 12px;
-  }
-
-  .result-card .info .card-title {
-    font-size: 0.8em;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 4px;
-  }
-
-  .result-card .info .card-label {
-    font-weight: 600;
-    font-size: 1em;
-  }
-
-  .result-card .info .card-conf {
-    color: var(--accent);
-    font-size: 0.9em;
-    margin-top: 2px;
-  }
+  .result-card .info { padding: 12px; }
+  .result-card .info .card-title { font-size: 0.8em; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .result-card .info .card-label { font-weight: 600; font-size: 1em; }
+  .result-card .info .card-conf { color: var(--accent); font-size: 0.9em; margin-top: 2px; }
 
   /* ── Model verification table ── */
   .model-verify {
@@ -368,13 +417,7 @@
     margin-bottom: 24px;
   }
 
-  .model-verify h3 {
-    font-size: 0.9em;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 12px;
-  }
+  .model-verify h3 { font-size: 0.9em; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
 
   .model-row {
     display: flex;
@@ -387,43 +430,17 @@
   .model-row:last-child { border-bottom: none; }
 
   .model-status {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.85em;
-    flex-shrink: 0;
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.85em; flex-shrink: 0;
   }
 
-  .model-status.fooled {
-    background: rgba(0, 184, 148, 0.2);
-    color: var(--success);
-  }
+  .model-status.fooled { background: rgba(0, 184, 148, 0.2); color: var(--success); }
+  .model-status.not-fooled { background: rgba(225, 112, 85, 0.2); color: var(--danger); }
 
-  .model-status.not-fooled {
-    background: rgba(225, 112, 85, 0.2);
-    color: var(--danger);
-  }
-
-  .model-name {
-    font-weight: 600;
-    min-width: 120px;
-  }
-
-  .model-prediction {
-    flex: 1;
-    color: var(--text-dim);
-    font-size: 0.9em;
-  }
-
-  .model-conf-val {
-    font-size: 0.9em;
-    color: var(--accent);
-    min-width: 50px;
-    text-align: right;
-  }
+  .model-name { font-weight: 600; min-width: 120px; }
+  .model-prediction { flex: 1; color: var(--text-dim); font-size: 0.9em; }
+  .model-conf-val { font-size: 0.9em; color: var(--accent); min-width: 50px; text-align: right; }
 
   /* ── Download button ── */
   .btn-download {
@@ -443,10 +460,7 @@
     text-decoration: none;
   }
 
-  .btn-download:hover {
-    background: rgba(0, 184, 148, 0.2);
-    transform: translateY(-1px);
-  }
+  .btn-download:hover { background: rgba(0, 184, 148, 0.2); transform: translateY(-1px); }
 
   /* ── Top-5 ── */
   .top5 {
@@ -457,33 +471,12 @@
     margin-bottom: 24px;
   }
 
-  .top5 h3 {
-    font-size: 0.9em;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 12px;
-  }
+  .top5 h3 { font-size: 0.9em; color: var(--text-dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
 
-  .top5-row {
-    display: flex;
-    align-items: center;
-    margin-bottom: 8px;
-    gap: 12px;
-  }
+  .top5-row { display: flex; align-items: center; margin-bottom: 8px; gap: 12px; }
+  .top5-label { flex: 1; font-size: 0.9em; }
 
-  .top5-label {
-    flex: 1;
-    font-size: 0.9em;
-  }
-
-  .top5-bar-wrap {
-    flex: 2;
-    height: 8px;
-    background: var(--bg);
-    border-radius: 4px;
-    overflow: hidden;
-  }
+  .top5-bar-wrap { flex: 2; height: 8px; background: var(--bg); border-radius: 4px; overflow: hidden; }
 
   .top5-bar {
     height: 100%;
@@ -492,12 +485,7 @@
     transition: width 0.5s ease;
   }
 
-  .top5-conf {
-    width: 50px;
-    text-align: right;
-    font-size: 0.85em;
-    color: var(--text-dim);
-  }
+  .top5-conf { width: 50px; text-align: right; font-size: 0.85em; color: var(--text-dim); }
 
   /* ── Stats ── */
   .stats {
@@ -506,125 +494,13 @@
     border-radius: var(--radius);
     padding: 20px;
     display: grid;
-    grid-template-columns: 1fr 1fr 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
     gap: 16px;
     text-align: center;
   }
 
-  .stat-value {
-    font-size: 1.3em;
-    font-weight: 600;
-    color: var(--accent);
-  }
-
-  .stat-label {
-    font-size: 0.8em;
-    color: var(--text-dim);
-    margin-top: 4px;
-  }
-
-  /* ── Tab switcher ── */
-  .tab-switcher {
-    display: flex;
-    gap: 0;
-    margin-bottom: 24px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    overflow: hidden;
-  }
-
-  .tab-btn {
-    flex: 1;
-    padding: 14px;
-    font-size: 1em;
-    font-weight: 600;
-    border: none;
-    background: transparent;
-    color: var(--text-dim);
-    cursor: pointer;
-    transition: background 0.2s, color 0.2s;
-    text-align: center;
-  }
-
-  .tab-btn:hover {
-    background: rgba(108, 92, 231, 0.08);
-  }
-
-  .tab-btn.active {
-    background: rgba(108, 92, 231, 0.15);
-    color: var(--accent);
-    box-shadow: inset 0 -3px 0 var(--accent);
-  }
-
-  .tab-content { display: none; }
-  .tab-content.active { display: block; }
-
-  /* ── Video mode selector ── */
-  .video-mode-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .video-mode-btn {
-    background: var(--surface);
-    border: 2px solid var(--border);
-    border-radius: var(--radius);
-    padding: 16px;
-    cursor: pointer;
-    transition: border-color 0.2s, background 0.2s;
-    color: var(--text);
-    text-align: left;
-  }
-
-  .video-mode-btn:hover {
-    border-color: var(--accent);
-    background: #1e1e2e;
-  }
-
-  .video-mode-btn.selected {
-    border-color: var(--accent);
-    background: rgba(108, 92, 231, 0.15);
-  }
-
-  .video-mode-btn .mode-title {
-    font-weight: 600;
-    font-size: 1em;
-    margin-bottom: 4px;
-  }
-
-  .video-mode-btn .mode-desc {
-    font-size: 0.8em;
-    color: var(--text-dim);
-    line-height: 1.4;
-  }
-
-  /* ── Video results ── */
-  .video-result-card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 24px;
-    text-align: center;
-    margin-bottom: 24px;
-  }
-
-  .video-result-card video {
-    max-width: 100%;
-    max-height: 400px;
-    border-radius: 8px;
-    margin-bottom: 16px;
-    background: #111;
-  }
-
-  .video-result-info {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    text-align: center;
-  }
+  .stat-value { font-size: 1.3em; font-weight: 600; color: var(--accent); }
+  .stat-label { font-size: 0.8em; color: var(--text-dim); margin-top: 4px; }
 
   /* ── Warning ── */
   .warning-box {
@@ -638,27 +514,57 @@
     line-height: 1.5;
   }
 
+  /* ── Toast notifications ── */
+  .toast-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    z-index: 9999;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .toast {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 20px;
+    font-size: 0.9em;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    animation: slideIn 0.3s ease;
+    max-width: 360px;
+  }
+
+  .toast.error { border-color: var(--danger); color: var(--danger); }
+  .toast.success { border-color: var(--success); color: var(--success); }
+  .toast.info { border-color: var(--accent); color: var(--accent); }
+
+  @keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+  }
+
   /* ── Responsive ── */
   @media (max-width: 640px) {
-    .preset-grid {
-      grid-template-columns: repeat(2, 1fr);
-    }
-    .result-grid, .settings-grid {
-      grid-template-columns: 1fr;
-    }
-    .stats {
-      grid-template-columns: 1fr 1fr;
-    }
+    .preset-grid { grid-template-columns: repeat(2, 1fr); }
+    .result-grid, .settings-grid { grid-template-columns: 1fr; }
+    .stats { grid-template-columns: 1fr 1fr; }
+    .video-mode-grid { grid-template-columns: 1fr; }
   }
 </style>
 </head>
 <body>
+<div class="toast-container" id="toast-container"></div>
+
 <div class="container">
   <h1>TikTok Vision Attack Lab</h1>
   <p class="subtitle">
     Ансамбль из 5 моделей, подобранных под стек TikTok: ResNet-50, EfficientNet (модерация),
     Swin-T (Video Swin), ViT-B/16 (BEiT3), ConvNeXt (доп. backbone).
   </p>
+
+  <div class="device-badge" id="device-badge"></div>
 
   <!-- Tab switcher -->
   <div class="tab-switcher">
@@ -685,7 +591,7 @@
       <div class="placeholder" id="source-placeholder">
         <div class="icon">&#128444;&#65039;</div>
         <div class="label">Исходное изображение</div>
-        <div class="hint">Перетащите или нажмите, чтобы выбрать файл</div>
+        <div class="hint">Перетащите файл сюда или нажмите для выбора</div>
       </div>
     </div>
 
@@ -705,9 +611,9 @@
           <label>Epsilon (сила шума)</label>
           <select id="epsilon">
             <option value="0.03">0.03 — тонкий</option>
-            <option value="0.06" selected>0.06 — баланс (рекомендуется)</option>
+            <option value="0.06" selected>0.06 — баланс</option>
             <option value="0.10">0.10 — сильный</option>
-            <option value="0.16">0.16 — агрессивный (заметный)</option>
+            <option value="0.16">0.16 — агрессивный</option>
           </select>
         </div>
         <div class="field">
@@ -716,7 +622,7 @@
         </div>
         <div class="method-hint" id="method-hint">
           TikTok Ensemble: атака по 5 моделям одновременно (ResNet-50 + EfficientNet-V2 +
-          Swin-T + ViT-B/16 + ConvNeXt). Покрывает CNN и Transformer архитектуры из стека TikTok.
+          Swin-T + ViT-B/16 + ConvNeXt). Покрывает CNN и Transformer архитектуры.
         </div>
       </div>
     </div>
@@ -730,7 +636,7 @@
       <div class="placeholder" id="video-placeholder">
         <div class="icon">&#127909;</div>
         <div class="label">Видеофайл (MP4)</div>
-        <div class="hint">Перетащите или нажмите, чтобы выбрать файл. Рекомендуется до 30 сек.</div>
+        <div class="hint">Перетащите файл сюда или нажмите для выбора. До 30 сек.</div>
       </div>
     </div>
 
@@ -740,21 +646,21 @@
       <div class="video-mode-grid">
         <div class="video-mode-btn selected" data-mode="fast">
           <div class="mode-title">Быстрый</div>
-          <div class="mode-desc">Атакуется один кадр, шум применяется ко всем. ~3-5 мин.</div>
+          <div class="mode-desc">Один кадр атакуется, шум на все. Быстро, но менее точно.</div>
         </div>
         <div class="video-mode-btn" data-mode="quality">
           <div class="mode-title">Качественный (warm-start)</div>
-          <div class="mode-desc">Атакуются ключевые кадры, шум интерполируется. ~15-40 мин.</div>
+          <div class="mode-desc">Ключевые кадры атакуются, шум интерполируется между ними.</div>
         </div>
       </div>
-      <div class="settings-grid">
+      <div class="settings-grid" style="grid-template-columns: 1fr 1fr;">
         <div class="field">
           <label>Epsilon (сила шума)</label>
           <select id="video-epsilon">
             <option value="0.03">0.03 — тонкий</option>
-            <option value="0.06" selected>0.06 — баланс (рекомендуется)</option>
+            <option value="0.06" selected>0.06 — баланс</option>
             <option value="0.10">0.10 — сильный</option>
-            <option value="0.16">0.16 — агрессивный (заметный)</option>
+            <option value="0.16">0.16 — агрессивный</option>
           </select>
         </div>
         <div class="field">
@@ -776,9 +682,11 @@
     </div>
     <div class="progress-text" id="progress-text">Запуск атаки...</div>
     <div class="progress-phase" id="progress-phase"></div>
+    <div class="progress-eta" id="progress-eta"></div>
+    <button class="btn-cancel" id="cancel-btn">Отменить</button>
   </div>
 
-  <!-- Results -->
+  <!-- Image Results -->
   <div class="results" id="results">
     <div class="result-status" id="result-status"></div>
 
@@ -817,18 +725,16 @@
 
     <!-- Download button -->
     <a class="btn-download" id="download-btn" href="/download" download="adversarial_result.png">
-      Скачать результат (PNG)
+      Скачать результат (PNG, полное разрешение)
     </a>
 
     <!-- Warning -->
     <div class="warning-box">
       Ансамбль заточен под стек TikTok: модерационные CNN (ResNet-50, EfficientNet),
-      Video Swin Transformer, BEiT3 (через ViT-B/16). Не покрывается: Monolith
-      (рекомендательная система, обучается online), SlowFast (action recognition по видео),
-      VLMo/ALBERT (текстовый анализ описаний и хэштегов).
+      Video Swin Transformer, BEiT3. Не покрывается: Monolith, SlowFast, VLMo/ALBERT.
     </div>
 
-    <!-- Top-5 after attack -->
+    <!-- Top-5 -->
     <div class="top5">
       <h3>Top-5 предсказаний после атаки (ResNet-50)</h3>
       <div id="top5-container"></div>
@@ -836,22 +742,11 @@
 
     <!-- Stats -->
     <div class="stats">
-      <div>
-        <div class="stat-value" id="stat-method"></div>
-        <div class="stat-label">Метод</div>
-      </div>
-      <div>
-        <div class="stat-value" id="stat-fooled"></div>
-        <div class="stat-label">Моделей обмануто</div>
-      </div>
-      <div>
-        <div class="stat-value" id="stat-linf"></div>
-        <div class="stat-label">L&#8734; норма шума</div>
-      </div>
-      <div>
-        <div class="stat-value" id="stat-resolution"></div>
-        <div class="stat-label">Разрешение выхода</div>
-      </div>
+      <div><div class="stat-value" id="stat-method"></div><div class="stat-label">Метод</div></div>
+      <div><div class="stat-value" id="stat-fooled"></div><div class="stat-label">Обмануто</div></div>
+      <div><div class="stat-value" id="stat-linf"></div><div class="stat-label">L&#8734; шума</div></div>
+      <div><div class="stat-value" id="stat-resolution"></div><div class="stat-label">Разрешение</div></div>
+      <div><div class="stat-value" id="stat-time"></div><div class="stat-label">Время</div></div>
     </div>
   </div>
 
@@ -864,27 +759,40 @@
     </a>
 
     <div class="stats" id="video-stats">
-      <div>
-        <div class="stat-value" id="vstat-mode"></div>
-        <div class="stat-label">Режим</div>
-      </div>
-      <div>
-        <div class="stat-value" id="vstat-epsilon"></div>
-        <div class="stat-label">Epsilon</div>
-      </div>
-      <div>
-        <div class="stat-value" id="vstat-steps"></div>
-        <div class="stat-label">Шаги</div>
-      </div>
-      <div>
-        <div class="stat-value" id="vstat-size"></div>
-        <div class="stat-label">Размер файла</div>
-      </div>
+      <div><div class="stat-value" id="vstat-mode"></div><div class="stat-label">Режим</div></div>
+      <div><div class="stat-value" id="vstat-epsilon"></div><div class="stat-label">Epsilon</div></div>
+      <div><div class="stat-value" id="vstat-steps"></div><div class="stat-label">Шаги</div></div>
+      <div><div class="stat-value" id="vstat-size"></div><div class="stat-label">Размер</div></div>
+      <div><div class="stat-value" id="vstat-time"></div><div class="stat-label">Время</div></div>
     </div>
   </div>
 </div>
 
 <script>
+// ── Toast notifications ──
+function showToast(message, type = 'info', duration = 4000) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(100%)';
+    toast.style.transition = 'all 0.3s ease';
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+// ── Format time ──
+function formatTime(sec) {
+  if (sec == null || sec < 0) return '--';
+  if (sec < 60) return Math.round(sec) + ' сек';
+  const m = Math.floor(sec / 60);
+  const s = Math.round(sec % 60);
+  return m + ' мин ' + (s > 0 ? s + ' сек' : '');
+}
+
 // ── Tab switching ──
 let activeTab = 'image';
 const tabBtns = document.querySelectorAll('.tab-btn');
@@ -916,91 +824,113 @@ presetBtns.forEach(btn => {
 const methodSelect = document.getElementById('method');
 const methodHint = document.getElementById('method-hint');
 const hints = {
-  ensemble: 'TikTok Ensemble: атака по 5 моделям (ResNet-50 + EfficientNet-V2 + Swin-T + ViT-B/16 + ConvNeXt). Покрывает CNN и Transformer архитектуры из стека TikTok.',
-  pgd: 'PGD: итеративная атака только по ResNet-50. Быстрее, но шум переносится хуже на другие модели.',
-  fgsm: 'FGSM: одношаговая атака. Очень быстрая, но слабая и плохо переносится.'
+  ensemble: 'TikTok Ensemble: атака по 5 моделям (ResNet-50 + EfficientNet-V2 + Swin-T + ViT-B/16 + ConvNeXt).',
+  pgd: 'PGD: итеративная атака только по ResNet-50. Быстрее, но хуже переносится.',
+  fgsm: 'FGSM: одношаговая атака. Очень быстрая, но слабая.'
 };
 
 methodSelect.addEventListener('change', () => {
   methodHint.textContent = hints[methodSelect.value] || '';
   const stepsInput = document.getElementById('steps');
-  if (methodSelect.value === 'ensemble') {
-    stepsInput.value = 120;
-  } else if (methodSelect.value === 'pgd') {
-    stepsInput.value = 40;
-  } else {
-    stepsInput.value = 1;
-  }
+  if (methodSelect.value === 'ensemble') stepsInput.value = 120;
+  else if (methodSelect.value === 'pgd') stepsInput.value = 40;
+  else stepsInput.value = 1;
 });
 
 // ── Video mode selection ──
 let selectedVideoMode = 'fast';
-const videoModeBtns = document.querySelectorAll('.video-mode-btn');
-videoModeBtns.forEach(btn => {
+document.querySelectorAll('.video-mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    videoModeBtns.forEach(b => b.classList.remove('selected'));
+    document.querySelectorAll('.video-mode-btn').forEach(b => b.classList.remove('selected'));
     btn.classList.add('selected');
     selectedVideoMode = btn.dataset.mode;
   });
 });
 
-// ── Source image upload ──
-const sourceInput = document.getElementById('source-input');
-const sourceCard  = document.getElementById('source-card');
-const runBtn      = document.getElementById('run-btn');
+// ── Drag-and-drop + upload ──
+const sourceCard = document.getElementById('source-card');
+const runBtn = document.getElementById('run-btn');
 
 let sourceFile = null;
+let videoFile = null;
+
+function setupDragDrop(card, onFile) {
+  ['dragenter', 'dragover'].forEach(ev => {
+    card.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); card.classList.add('dragover'); });
+  });
+  ['dragleave', 'drop'].forEach(ev => {
+    card.addEventListener(ev, e => { e.preventDefault(); e.stopPropagation(); card.classList.remove('dragover'); });
+  });
+  card.addEventListener('drop', e => {
+    const file = e.dataTransfer.files[0];
+    if (file) onFile(file);
+  });
+}
 
 function attachSourceUpload(input) {
   input.addEventListener('change', (e) => {
     const file = e.target.files[0];
-    if (!file) return;
-    sourceFile = file;
-
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      sourceCard.classList.add('has-image');
-      sourceCard.innerHTML = `
-        <input type="file" accept="image/*">
-        <img class="preview" src="${ev.target.result}" alt="Preview">
-        <div class="preview-label">Нажмите чтобы заменить</div>
-      `;
-      attachSourceUpload(sourceCard.querySelector('input[type="file"]'));
-    };
-    reader.readAsDataURL(file);
-    updateRunButton();
+    if (file) handleImageFile(file);
   });
 }
 
-attachSourceUpload(sourceInput);
+function handleImageFile(file) {
+  if (file.size > 20 * 1024 * 1024) {
+    showToast('Файл слишком большой (макс. 20 МБ)', 'error');
+    return;
+  }
+  sourceFile = file;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    sourceCard.classList.add('has-image');
+    sourceCard.innerHTML = `
+      <input type="file" accept="image/*">
+      <img class="preview" src="${ev.target.result}" alt="Preview">
+      <div class="preview-label">Нажмите чтобы заменить</div>
+    `;
+    attachSourceUpload(sourceCard.querySelector('input[type="file"]'));
+    setupDragDrop(sourceCard, handleImageFile);
+  };
+  reader.readAsDataURL(file);
+  updateRunButton();
+}
 
-// ── Video upload ──
-const videoInput = document.getElementById('video-input');
+attachSourceUpload(document.getElementById('source-input'));
+setupDragDrop(sourceCard, handleImageFile);
+
+// Video upload
 const videoCard = document.getElementById('video-card');
-let videoFile = null;
 
 function attachVideoUpload(input) {
   input.addEventListener('change', (e) => {
     const file = e.target.files[0];
-    if (!file) return;
-    videoFile = file;
-
-    videoCard.classList.add('has-image');
-    const sizeMB = (file.size / 1024 / 1024).toFixed(1);
-    videoCard.innerHTML = `
-      <input type="file" accept="video/*">
-      <div style="padding:32px 24px;">
-        <div class="icon" style="font-size:2.5em;margin-bottom:8px;">&#127909;</div>
-        <div class="label" style="font-weight:600;margin-bottom:4px;">${file.name}</div>
-        <div class="hint" style="color:var(--text-dim);font-size:0.85em;">${sizeMB} МБ — нажмите чтобы заменить</div>
-      </div>
-    `;
-    attachVideoUpload(videoCard.querySelector('input[type="file"]'));
-    updateRunButton();
+    if (file) handleVideoFile(file);
   });
 }
 
-attachVideoUpload(videoInput);
+function handleVideoFile(file) {
+  if (file.size > 150 * 1024 * 1024) {
+    showToast('Видео слишком большое (макс. 150 МБ)', 'error');
+    return;
+  }
+  videoFile = file;
+  videoCard.classList.add('has-image');
+  const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+  videoCard.innerHTML = `
+    <input type="file" accept="video/*">
+    <div style="padding:32px 24px;">
+      <div class="icon" style="font-size:2.5em;margin-bottom:8px;">&#127909;</div>
+      <div class="label" style="font-weight:600;margin-bottom:4px;">${file.name}</div>
+      <div class="hint" style="color:var(--text-dim);font-size:0.85em;">${sizeMB} МБ — нажмите чтобы заменить</div>
+    </div>
+  `;
+  attachVideoUpload(videoCard.querySelector('input[type="file"]'));
+  setupDragDrop(videoCard, handleVideoFile);
+  updateRunButton();
+}
+
+attachVideoUpload(document.getElementById('video-input'));
+setupDragDrop(videoCard, handleVideoFile);
 
 function updateRunButton() {
   if (activeTab === 'image') {
@@ -1015,10 +945,10 @@ const phaseLabels = {
   starting: 'Запуск...',
   loading: 'Загрузка изображений...',
   attacking: 'Атака нейросетей...',
-  upscaling: 'Масштабирование шума на полное разрешение...',
-  classifying: 'Проверка по всем моделям...',
-  extracting: 'Извлечение кадров из видео...',
-  interpolating: 'Интерполяция шума между ключевыми кадрами...',
+  upscaling: 'Масштабирование шума...',
+  classifying: 'Проверка по моделям...',
+  extracting: 'Извлечение кадров...',
+  interpolating: 'Интерполяция шума...',
   applying: 'Наложение шума на кадры...',
   saving: 'Сохранение видео...',
   done: 'Готово!'
@@ -1032,13 +962,13 @@ function showResults(data) {
 
   if (fooled === total) {
     statusEl.className = 'result-status success';
-    statusEl.textContent = `Все ${total} модели обмануты! Все видят "${data.target_label}" вместо "${data.source_label}"`;
+    statusEl.textContent = `Все ${total} моделей обмануты! "${data.target_label}" вместо "${data.source_label}"`;
   } else if (fooled > 0) {
     statusEl.className = 'result-status partial';
-    statusEl.textContent = `Обмануто ${fooled} из ${total} моделей. Цель: "${data.target_label}". Попробуйте увеличить epsilon или шаги.`;
+    statusEl.textContent = `Обмануто ${fooled}/${total}. Цель: "${data.target_label}". Увеличьте epsilon/шаги.`;
   } else {
     statusEl.className = 'result-status fail';
-    statusEl.textContent = `Ни одна модель не обманута. Цель: "${data.target_label}". Увеличьте epsilon и шаги.`;
+    statusEl.textContent = `0/${total} обмануто. Увеличьте epsilon и шаги.`;
   }
 
   document.getElementById('res-source').src = 'data:image/png;base64,' + data.source_image;
@@ -1054,12 +984,12 @@ function showResults(data) {
   const modelContainer = document.getElementById('model-verify-container');
   modelContainer.innerHTML = '';
   data.model_results.forEach(m => {
-    const statusClass = m.fooled ? 'fooled' : 'not-fooled';
-    const statusIcon = m.fooled ? '\u2713' : '\u2717';
+    const sc = m.fooled ? 'fooled' : 'not-fooled';
+    const si = m.fooled ? '\u2713' : '\u2717';
     const role = m.role ? `<span style="color:var(--text-dim);font-size:0.75em;display:block">${m.role}</span>` : '';
     modelContainer.innerHTML += `
       <div class="model-row">
-        <div class="model-status ${statusClass}">${statusIcon}</div>
+        <div class="model-status ${sc}">${si}</div>
         <div class="model-name">${m.name}${role}</div>
         <div class="model-prediction">&#8594; ${m.label}</div>
         <div class="model-conf-val">${m.confidence}%</div>
@@ -1072,9 +1002,7 @@ function showResults(data) {
     top5.innerHTML += `
       <div class="top5-row">
         <div class="top5-label">${p.label}</div>
-        <div class="top5-bar-wrap">
-          <div class="top5-bar" style="width: ${p.confidence}%"></div>
-        </div>
+        <div class="top5-bar-wrap"><div class="top5-bar" style="width: ${p.confidence}%"></div></div>
         <div class="top5-conf">${p.confidence}%</div>
       </div>`;
   });
@@ -1083,8 +1011,12 @@ function showResults(data) {
   document.getElementById('stat-fooled').textContent = `${data.models_fooled}/${data.models_total}`;
   document.getElementById('stat-linf').textContent   = data.noise_l_inf;
   document.getElementById('stat-resolution').textContent = data.output_resolution || '224x224';
+  document.getElementById('stat-time').textContent = formatTime(data.elapsed_sec);
 
   document.getElementById('results').classList.add('active');
+
+  const devStr = data.device || 'cpu';
+  showToast(`Готово за ${formatTime(data.elapsed_sec)} на ${devStr.toUpperCase()}`, 'success');
 }
 
 // ── Display video results ──
@@ -1098,16 +1030,22 @@ function showVideoResults(data) {
   document.getElementById('vstat-epsilon').textContent = data.epsilon;
   document.getElementById('vstat-steps').textContent = data.steps;
   document.getElementById('vstat-size').textContent = data.video_size_kb + ' КБ';
+  document.getElementById('vstat-time').textContent = formatTime(data.elapsed_sec);
 
   document.getElementById('video-results').classList.add('active');
+  showToast(`Видео готово за ${formatTime(data.elapsed_sec)}`, 'success');
 }
 
 // ── Progress polling ──
+let currentTaskId = null;
+
 function pollProgress(taskId, isVideo) {
+  currentTaskId = taskId;
   const progressBar = document.getElementById('progress-bar');
   const progressPercent = document.getElementById('progress-percent');
   const progressText = document.getElementById('progress-text');
   const progressPhase = document.getElementById('progress-phase');
+  const progressEta = document.getElementById('progress-eta');
 
   const poll = async () => {
     try {
@@ -1122,24 +1060,36 @@ function pollProgress(taskId, isVideo) {
         if (data.extra) stepText += ` (${data.extra})`;
         progressText.textContent = stepText;
         progressPhase.textContent = phaseLabels[data.phase] || data.phase;
+
+        // ETA
+        let etaText = '';
+        if (data.elapsed != null) etaText += `Прошло: ${formatTime(data.elapsed)}`;
+        if (data.eta != null && data.eta > 0) etaText += ` | Осталось: ~${formatTime(data.eta)}`;
+        progressEta.textContent = etaText;
+
         setTimeout(poll, 300);
       } else if (data.status === 'done') {
         progressBar.style.width = '100%';
         progressPercent.textContent = '100%';
         progressText.textContent = 'Готово!';
         progressPhase.textContent = '';
+        progressEta.textContent = '';
+        currentTaskId = null;
         setTimeout(() => {
           document.getElementById('progress').classList.remove('active');
-          if (isVideo) {
-            showVideoResults(data.result);
-          } else {
-            showResults(data.result);
-          }
+          if (isVideo) showVideoResults(data.result);
+          else showResults(data.result);
           runBtn.disabled = false;
         }, 400);
+      } else if (data.status === 'cancelled') {
+        document.getElementById('progress').classList.remove('active');
+        currentTaskId = null;
+        showToast('Атака отменена', 'info');
+        runBtn.disabled = false;
       } else if (data.status === 'error') {
         document.getElementById('progress').classList.remove('active');
-        alert('Ошибка: ' + (data.error || 'Unknown error'));
+        currentTaskId = null;
+        showToast('Ошибка: ' + (data.error || 'Неизвестная ошибка'), 'error', 6000);
         runBtn.disabled = false;
       }
     } catch (err) {
@@ -1150,6 +1100,15 @@ function pollProgress(taskId, isVideo) {
   poll();
 }
 
+// ── Cancel button ──
+document.getElementById('cancel-btn').addEventListener('click', async () => {
+  if (!currentTaskId) return;
+  try {
+    await fetch(`/cancel/${currentTaskId}`, { method: 'POST' });
+    showToast('Отмена запрошена...', 'info');
+  } catch (e) {}
+});
+
 // ── Run attack ──
 runBtn.addEventListener('click', async () => {
   const isVideo = activeTab === 'video';
@@ -1159,11 +1118,11 @@ runBtn.addEventListener('click', async () => {
 
   runBtn.disabled = true;
 
-  // Reset progress
   document.getElementById('progress-bar').style.width = '0%';
   document.getElementById('progress-percent').textContent = '0%';
   document.getElementById('progress-text').textContent = 'Запуск...';
   document.getElementById('progress-phase').textContent = '';
+  document.getElementById('progress-eta').textContent = '';
   document.getElementById('progress').classList.add('active');
   document.getElementById('results').classList.remove('active');
   document.getElementById('video-results').classList.remove('active');
@@ -1192,7 +1151,7 @@ runBtn.addEventListener('click', async () => {
 
     if (data.error) {
       document.getElementById('progress').classList.remove('active');
-      alert(data.error);
+      showToast(data.error, 'error', 5000);
       runBtn.disabled = false;
       return;
     }
@@ -1201,10 +1160,23 @@ runBtn.addEventListener('click', async () => {
 
   } catch (err) {
     document.getElementById('progress').classList.remove('active');
-    alert('Ошибка: ' + err.message);
+    showToast('Ошибка соединения: ' + err.message, 'error');
     runBtn.disabled = false;
   }
 });
+
+// ── Show device badge on load ──
+(async () => {
+  try {
+    const resp = await fetch('/device');
+    const data = await resp.json();
+    const badge = document.getElementById('device-badge');
+    const dev = data.device || 'cpu';
+    const isGpu = dev !== 'cpu';
+    const label = isGpu ? dev.toUpperCase() + ' (GPU)' : 'CPU (GPU не обнаружен)';
+    badge.innerHTML = `<span class="${isGpu ? 'gpu' : 'cpu'}">${label}</span>`;
+  } catch(e) {}
+})();
 </script>
 </body>
 </html>

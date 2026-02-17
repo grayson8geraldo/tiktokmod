@@ -58,10 +58,15 @@ def extract_frames(video_bytes: bytes) -> tuple[list[np.ndarray], float, int, in
 
 
 def save_video(frames_rgb: list[np.ndarray], fps: float, output_path: str) -> None:
-    """Save RGB frames to MP4 file."""
+    """Save RGB frames to MP4 file (H.264 for browser compatibility)."""
     h, w = frames_rgb[0].shape[:2]
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+    # Try H.264 first (browser-compatible), fallback to mp4v
+    for codec in ["avc1", "H264", "mp4v"]:
+        fourcc = cv2.VideoWriter_fourcc(*codec)
+        writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+        if writer.isOpened():
+            break
+        writer.release()
     for frame in frames_rgb:
         writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
     writer.release()

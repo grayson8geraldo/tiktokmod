@@ -13,3 +13,4 @@ output/
 *.jpg
 *.jpeg
 !examples/*.jpg
+imagenet_labels.json

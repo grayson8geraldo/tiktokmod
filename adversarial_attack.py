@@ -40,6 +40,18 @@ from PIL import Image
 IMAGENET_MEAN = torch.tensor([0.485, 0.456, 0.406]).view(3, 1, 1)
 IMAGENET_STD  = torch.tensor([0.229, 0.224, 0.225]).view(3, 1, 1)
 
+
+def get_device() -> torch.device:
+    """Auto-detect best available device: CUDA > MPS > CPU."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+DEVICE = get_device()
+
 # ── A small subset of ImageNet labels (full list has 1000 entries) ────────────
 # We'll load them dynamically if possible; otherwise fall back to a minimal map.
 LABELS_URL = (
@@ -69,11 +81,15 @@ def load_image(path: str, size: int = 224) -> torch.Tensor:
 
 
 def normalise(tensor: torch.Tensor) -> torch.Tensor:
-    return (tensor - IMAGENET_MEAN) / IMAGENET_STD
+    mean = IMAGENET_MEAN.to(tensor.device)
+    std = IMAGENET_STD.to(tensor.device)
+    return (tensor - mean) / std
 
 
 def denormalise(tensor: torch.Tensor) -> torch.Tensor:
-    return tensor * IMAGENET_STD + IMAGENET_MEAN
+    mean = IMAGENET_MEAN.to(tensor.device)
+    std = IMAGENET_STD.to(tensor.device)
+    return tensor * std + mean
 
 
 def predict(model: torch.nn.Module, img_tensor: torch.Tensor,
@@ -97,16 +113,17 @@ def fgsm_targeted(model: torch.nn.Module, img: torch.Tensor,
     Perturbs the image in one step to *minimise* the loss for the target class
     (i.e. make the model more confident about the target).
     """
-    perturbed = img.clone().requires_grad_(True)
+    dev = next(model.parameters()).device
+    img_d = img.to(dev)
+    perturbed = img_d.clone().requires_grad_(True)
     logits = model(normalise(perturbed))
-    loss = F.cross_entropy(logits, torch.tensor([target_class]))
+    loss = F.cross_entropy(logits, torch.tensor([target_class], device=dev))
 
     model.zero_grad()
     loss.backward()
 
-    # Move *against* the gradient to minimise loss for target class
     adv = perturbed - epsilon * perturbed.grad.sign()
-    return adv.detach().clamp(0, 1)
+    return adv.detach().clamp(0, 1).cpu()
 
 
 def pgd_targeted(model: torch.nn.Module, img: torch.Tensor,
@@ -119,24 +136,26 @@ def pgd_targeted(model: torch.nn.Module, img: torch.Tensor,
     Stronger than FGSM — takes many small steps and projects back
     into the epsilon-ball around the original image.
     """
-    adv = img.clone()
+    dev = next(model.parameters()).device
+    img_d = img.to(dev)
+    adv = img_d.clone()
+    target_t = torch.tensor([target_class], device=dev)
     for step in range(steps):
         if progress_callback:
             progress_callback(step, steps)
         adv.requires_grad_(True)
         logits = model(normalise(adv))
-        loss = F.cross_entropy(logits, torch.tensor([target_class]))
+        loss = F.cross_entropy(logits, target_t)
 
         model.zero_grad()
         loss.backward()
 
         with torch.no_grad():
             adv = adv - alpha * adv.grad.sign()
-            # Project back into ε-ball
-            delta = torch.clamp(adv - img, -epsilon, epsilon)
-            adv = torch.clamp(img + delta, 0, 1)
+            delta = torch.clamp(adv - img_d, -epsilon, epsilon)
+            adv = torch.clamp(img_d + delta, 0, 1)
 
-    return adv.detach()
+    return adv.detach().cpu()
 
 
 # ── Transferability-enhancing techniques ──────────────────────────────────────
@@ -179,6 +198,7 @@ def ensemble_mi_di_ti_fgsm(
     ti_kernel_size: int = 5,
     progress_callback=None,
     init_delta: torch.Tensor | None = None,
+    cancel_flag: list | None = None,
 ) -> torch.Tensor:
     """
     Ensemble MI-DI-TI-FGSM (targeted).
@@ -190,26 +210,29 @@ def ensemble_mi_di_ti_fgsm(
       - TI: translation-invariant via Gaussian-smoothed gradients (Dong et al., 2019)
 
     If init_delta is provided, start from img+init_delta (warm-start).
+    Pass cancel_flag=[False] — set cancel_flag[0]=True to abort early.
     """
+    dev = next(model_list[0].parameters()).device
+    img_d = img.to(dev)
+
     if init_delta is not None:
-        adv = torch.clamp(img + init_delta, 0, 1)
+        adv = torch.clamp(img_d + init_delta.to(dev), 0, 1)
     else:
-        adv = img.clone()
-    grad_momentum = torch.zeros_like(img)
+        adv = img_d.clone()
+    grad_momentum = torch.zeros_like(img_d)
 
-    # Gaussian kernel for translation-invariant smoothing
-    ti_kernel = _gaussian_kernel(ti_kernel_size)
-
-    target_tensor = torch.tensor([target_class])
+    ti_kernel = _gaussian_kernel(ti_kernel_size).to(dev)
+    target_tensor = torch.tensor([target_class], device=dev)
 
     for step in range(steps):
+        if cancel_flag and cancel_flag[0]:
+            break
         if progress_callback:
             progress_callback(step, steps)
         adv.requires_grad_(True)
-        total_grad = torch.zeros_like(img)
+        total_grad = torch.zeros_like(img_d)
 
         for model in model_list:
-            # Apply input diversity
             adv_di = _input_diversity(adv, prob=di_prob)
             logits = model(normalise(adv_di))
             loss = F.cross_entropy(logits, target_tensor)
@@ -218,24 +241,20 @@ def ensemble_mi_di_ti_fgsm(
             total_grad += adv.grad.data.clone()
             adv.grad.data.zero_()
 
-        # Average over ensemble
         total_grad /= len(model_list)
 
-        # TI: smooth gradient with Gaussian kernel
         total_grad = F.conv2d(total_grad, ti_kernel, padding=ti_kernel_size // 2,
                               groups=3)
 
-        # MI: update momentum
         grad_norm = total_grad / (total_grad.abs().mean(dim=[1, 2, 3], keepdim=True) + 1e-12)
         grad_momentum = momentum * grad_momentum + grad_norm
 
         with torch.no_grad():
-            # Targeted: move against gradient to minimise loss for target class
             adv = adv - alpha * grad_momentum.sign()
-            delta = torch.clamp(adv - img, -epsilon, epsilon)
-            adv = torch.clamp(img + delta, 0, 1)
+            delta = torch.clamp(adv - img_d, -epsilon, epsilon)
+            adv = torch.clamp(img_d + delta, 0, 1)
 
-    return adv.detach()
+    return adv.detach().cpu()
 
 
 # ── Visualisation ─────────────────────────────────────────────────────────────

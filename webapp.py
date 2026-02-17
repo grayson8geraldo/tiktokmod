@@ -18,7 +18,9 @@ import base64
 import io
 import json
 import threading
+import time
 import uuid
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -30,6 +32,7 @@ from torchvision import models, transforms
 from adversarial_attack import (
     IMAGENET_MEAN,
     IMAGENET_STD,
+    DEVICE,
     load_imagenet_labels,
     normalise,
     pgd_targeted,
@@ -43,6 +46,7 @@ except ImportError:
     VIDEO_SUPPORT = False
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # 200 MB max upload
 
 # ── Preset target classes ────────────────────────────────────────────────────
 
@@ -67,29 +71,33 @@ PRESET_TARGETS = [
 
 # ── Load TikTok-matched ensemble at startup ─────────────────────────────────
 
+print(f"[*] Device: {DEVICE}")
+
 MODELS = {}
 
-print("[1/5] Loading ResNet-50 (→ TikTok moderation CNN) …")
-MODELS["ResNet-50"] = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-MODELS["ResNet-50"].eval()
+def _load_model(name, factory, role_hint):
+    print(f"  Loading {name} ({role_hint}) …")
+    m = factory()
+    m.eval()
+    m.to(DEVICE)
+    return m
 
-print("[2/5] Loading EfficientNet-V2-S (→ TikTok moderation CNN) …")
-MODELS["EfficientNet-V2"] = models.efficientnet_v2_s(
-    weights=models.EfficientNet_V2_S_Weights.DEFAULT)
-MODELS["EfficientNet-V2"].eval()
-
-print("[3/5] Loading Swin-T (→ Video Swin Transformer) …")
-MODELS["Swin-T"] = models.swin_t(weights=models.Swin_T_Weights.DEFAULT)
-MODELS["Swin-T"].eval()
-
-print("[4/5] Loading ViT-B/16 (→ BEiT3 vision encoder) …")
-MODELS["ViT-B/16"] = models.vit_b_16(weights=models.ViT_B_16_Weights.DEFAULT)
-MODELS["ViT-B/16"].eval()
-
-print("[5/5] Loading ConvNeXt-Small (extra diversity) …")
-MODELS["ConvNeXt-S"] = models.convnext_small(
-    weights=models.ConvNeXt_Small_Weights.DEFAULT)
-MODELS["ConvNeXt-S"].eval()
+print("[1/5] Loading models …")
+MODELS["ResNet-50"] = _load_model(
+    "ResNet-50", lambda: models.resnet50(weights=models.ResNet50_Weights.DEFAULT),
+    "TikTok moderation CNN")
+MODELS["EfficientNet-V2"] = _load_model(
+    "EfficientNet-V2", lambda: models.efficientnet_v2_s(weights=models.EfficientNet_V2_S_Weights.DEFAULT),
+    "TikTok moderation CNN")
+MODELS["Swin-T"] = _load_model(
+    "Swin-T", lambda: models.swin_t(weights=models.Swin_T_Weights.DEFAULT),
+    "Video Swin Transformer")
+MODELS["ViT-B/16"] = _load_model(
+    "ViT-B/16", lambda: models.vit_b_16(weights=models.ViT_B_16_Weights.DEFAULT),
+    "BEiT3 vision encoder")
+MODELS["ConvNeXt-S"] = _load_model(
+    "ConvNeXt-S", lambda: models.convnext_small(weights=models.ConvNeXt_Small_Weights.DEFAULT),
+    "extra backbone diversity")
 
 ENSEMBLE = list(MODELS.values())
 
@@ -101,16 +109,40 @@ MODEL_ROLES = {
     "ConvNeXt-S": "Доп. backbone",
 }
 
-print("[*] Loading ImageNet labels …")
-LABELS = load_imagenet_labels()
+# Cache labels locally so we don't depend on internet after first run
+LABELS_CACHE = Path(__file__).parent / "imagenet_labels.json"
 
-print(f"[✓] {len(ENSEMBLE)} models loaded — open http://localhost:5000")
+def _load_labels():
+    if LABELS_CACHE.exists():
+        return json.loads(LABELS_CACHE.read_text())
+    labels = load_imagenet_labels()
+    if labels[0] != "0":  # successfully fetched, not fallback indices
+        LABELS_CACHE.write_text(json.dumps(labels, ensure_ascii=False))
+    return labels
+
+print("[*] Loading ImageNet labels …")
+LABELS = _load_labels()
+
+print(f"[OK] {len(ENSEMBLE)} models on {DEVICE} — open http://localhost:5000")
 
 # ── Task tracking for async processing ───────────────────────────────────────
 
 _tasks: dict = {}
+_tasks_lock = threading.Lock()
+_results_lock = threading.Lock()
 _last_result_png: bytes | None = None
 _last_result_video: bytes | None = None
+_TASK_MAX_AGE = 600  # auto-expire tasks older than 10 minutes
+
+
+def _cleanup_tasks():
+    """Remove stale tasks to prevent memory leaks."""
+    now = time.time()
+    with _tasks_lock:
+        stale = [tid for tid, t in _tasks.items()
+                 if now - t.get("created", 0) > _TASK_MAX_AGE]
+        for tid in stale:
+            del _tasks[tid]
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -141,8 +173,10 @@ def classify(img_tensor: torch.Tensor, model=None) -> list[dict]:
     """Return top-5 predictions as list of {idx, label, confidence}."""
     if model is None:
         model = ENSEMBLE[0]
+    dev = next(model.parameters()).device
+    img_d = img_tensor.to(dev)
     with torch.no_grad():
-        logits = model(normalise(img_tensor))
+        logits = model(normalise(img_d))
     probs = F.softmax(logits, dim=1)
     top5_conf, top5_idx = torch.topk(probs, 5, dim=1)
 
@@ -197,10 +231,17 @@ def index():
     return render_template("index.html", presets=PRESET_TARGETS)
 
 
+@app.route("/device")
+def device_info():
+    """Return current compute device info."""
+    return jsonify({"device": str(DEVICE)})
+
+
 @app.route("/transform", methods=["POST"])
 def transform():
     """Start adversarial attack in background thread. Returns task_id."""
     global _last_result_png
+    _cleanup_tasks()
 
     source_file = request.files.get("source_image")
     target_class_idx = request.form.get("target_class")
@@ -210,21 +251,28 @@ def transform():
     if target_class_idx is None:
         return jsonify({"error": "Выберите целевой класс."}), 400
 
-    # Read file into memory (needed for thread)
     img_bytes = source_file.read()
+    if len(img_bytes) > 20 * 1024 * 1024:
+        return jsonify({"error": "Файл слишком большой (макс. 20 МБ)"}), 400
+
     target_class_idx = int(target_class_idx)
     method = request.form.get("method", "ensemble")
     epsilon = float(request.form.get("epsilon", "0.06"))
     steps = int(request.form.get("steps", "120"))
 
+    cancel_flag = [False]
     task_id = str(uuid.uuid4())
-    _tasks[task_id] = {
-        "progress": 0,
-        "total": steps,
-        "phase": "starting",
-        "status": "running",
-        "result": None,
-    }
+    with _tasks_lock:
+        _tasks[task_id] = {
+            "progress": 0,
+            "total": steps,
+            "phase": "starting",
+            "status": "running",
+            "result": None,
+            "created": time.time(),
+            "started": time.time(),
+            "cancel_flag": cancel_flag,
+        }
 
     def run_attack():
         global _last_result_png
@@ -232,19 +280,17 @@ def transform():
             task = _tasks[task_id]
             target_label = LABELS[target_class_idx]
 
-            # ── Phase 1: Load images ──
             task["phase"] = "loading"
             source_224 = load_image_for_attack(img_bytes, 224)
             source_full = load_image_full_res(img_bytes)
             orig_h, orig_w = source_full.shape[2], source_full.shape[3]
 
-            # Classify source
             source_preds = classify(source_224, ENSEMBLE[0])
             source_label = source_preds[0]["label"]
             source_conf = source_preds[0]["confidence"]
 
-            # ── Phase 2: Attack at 224x224 ──
             task["phase"] = "attacking"
+            task["started"] = time.time()
 
             def on_progress(step, total):
                 task["progress"] = step + 1
@@ -265,9 +311,13 @@ def transform():
                     ENSEMBLE, source_224, target_class_idx,
                     epsilon=epsilon, steps=steps,
                     progress_callback=on_progress,
+                    cancel_flag=cancel_flag,
                 )
 
-            # ── Phase 3: Upscale noise to full resolution ──
+            if cancel_flag[0]:
+                task["status"] = "cancelled"
+                return
+
             task["phase"] = "upscaling"
             noise_224 = adv_224 - source_224
             noise_full = F.interpolate(
@@ -276,7 +326,6 @@ def transform():
             )
             adv_full = torch.clamp(source_full + noise_full, 0, 1)
 
-            # ── Phase 4: Classify on all models ──
             task["phase"] = "classifying"
 
             models_fooled = 0
@@ -302,13 +351,13 @@ def transform():
             adv_conf = first_preds[0]["confidence"]
             success = first_preds[0]["idx"] == target_class_idx
 
-            # Save full-res result for download
-            _last_result_png = tensor_to_png_bytes(adv_full)
+            with _results_lock:
+                _last_result_png = tensor_to_png_bytes(adv_full)
 
-            # Noise stats
             noise = adv_224 - source_224
             l_inf = noise.abs().max().item()
             l_2 = noise.norm(2).item()
+            elapsed = round(time.time() - task["created"], 1)
 
             task["result"] = {
                 "success": success,
@@ -331,6 +380,8 @@ def transform():
                 "epsilon": epsilon,
                 "steps": steps,
                 "output_resolution": f"{orig_w}x{orig_h}",
+                "elapsed_sec": elapsed,
+                "device": str(DEVICE),
             }
             task["status"] = "done"
             task["phase"] = "done"
@@ -352,26 +403,39 @@ def progress(task_id):
     if not task:
         return jsonify({"error": "Task not found"}), 404
 
+    if task["status"] == "cancelled":
+        with _tasks_lock:
+            _tasks.pop(task_id, None)
+        return jsonify({"status": "cancelled"})
+
     if task["status"] == "error":
-        return jsonify({
-            "status": "error",
-            "error": task.get("error", "Unknown error"),
-        })
+        error = task.get("error", "Unknown error")
+        with _tasks_lock:
+            _tasks.pop(task_id, None)
+        return jsonify({"status": "error", "error": error})
 
     if task["status"] == "done":
         result = task["result"]
-        # Clean up task
-        del _tasks[task_id]
-        return jsonify({
-            "status": "done",
-            "result": result,
-        })
+        with _tasks_lock:
+            _tasks.pop(task_id, None)
+        return jsonify({"status": "done", "result": result})
+
+    # Running — compute ETA
+    elapsed = time.time() - task.get("started", task.get("created", time.time()))
+    prog = task["progress"]
+    total = task["total"]
+    eta = None
+    if prog > 0 and total > 0:
+        rate = elapsed / prog
+        eta = round(rate * (total - prog), 1)
 
     resp = {
         "status": "running",
-        "progress": task["progress"],
-        "total": task["total"],
+        "progress": prog,
+        "total": total,
         "phase": task["phase"],
+        "elapsed": round(elapsed, 1),
+        "eta": eta,
     }
     if task.get("extra"):
         resp["extra"] = task["extra"]
@@ -380,12 +444,26 @@ def progress(task_id):
     return jsonify(resp)
 
 
+@app.route("/cancel/<task_id>", methods=["POST"])
+def cancel_task(task_id):
+    """Cancel a running attack."""
+    task = _tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+    flag = task.get("cancel_flag")
+    if flag:
+        flag[0] = True
+    return jsonify({"ok": True})
+
+
 @app.route("/download")
 def download():
     """Download the last generated adversarial image as PNG."""
-    if _last_result_png is None:
+    with _results_lock:
+        data = _last_result_png
+    if data is None:
         return "No result available", 404
-    buf = io.BytesIO(_last_result_png)
+    buf = io.BytesIO(data)
     return send_file(buf, mimetype="image/png", as_attachment=True,
                      download_name="adversarial_result.png")
 
@@ -394,9 +472,10 @@ def download():
 def transform_video():
     """Start video adversarial attack in background thread. Returns task_id."""
     global _last_result_video
+    _cleanup_tasks()
 
     if not VIDEO_SUPPORT:
-        return jsonify({"error": "Видео не поддерживается: установите opencv-python-headless (pip install opencv-python-headless)"}), 400
+        return jsonify({"error": "Видео не поддерживается: pip install opencv-python-headless"}), 400
 
     source_file = request.files.get("source_video")
     target_class_idx = request.form.get("target_class")
@@ -407,26 +486,35 @@ def transform_video():
         return jsonify({"error": "Выберите целевой класс."}), 400
 
     video_bytes = source_file.read()
+    if len(video_bytes) > 150 * 1024 * 1024:
+        return jsonify({"error": "Видео слишком большое (макс. 150 МБ)"}), 400
+
     target_class_idx = int(target_class_idx)
     mode = request.form.get("video_mode", "fast")
     epsilon = float(request.form.get("epsilon", "0.06"))
     steps = int(request.form.get("steps", "120"))
 
+    cancel_flag = [False]
     task_id = str(uuid.uuid4())
-    _tasks[task_id] = {
-        "progress": 0,
-        "total": steps,
-        "phase": "starting",
-        "status": "running",
-        "result": None,
-        "media_type": "video",
-    }
+    with _tasks_lock:
+        _tasks[task_id] = {
+            "progress": 0,
+            "total": steps,
+            "phase": "starting",
+            "status": "running",
+            "result": None,
+            "media_type": "video",
+            "created": time.time(),
+            "started": time.time(),
+            "cancel_flag": cancel_flag,
+        }
 
     def run_video_attack():
         global _last_result_video
         try:
             task = _tasks[task_id]
             target_label = LABELS[target_class_idx]
+            task["started"] = time.time()
 
             def on_progress(phase, frame_idx, total_frames, step, total_steps):
                 task["phase"] = phase
@@ -462,7 +550,10 @@ def transform_video():
                     progress_callback=on_progress,
                 )
 
-            _last_result_video = result_bytes
+            elapsed = round(time.time() - task["created"], 1)
+
+            with _results_lock:
+                _last_result_video = result_bytes
 
             task["result"] = {
                 "success": True,
@@ -471,6 +562,8 @@ def transform_video():
                 "epsilon": epsilon,
                 "steps": steps,
                 "video_size_kb": round(len(result_bytes) / 1024, 1),
+                "elapsed_sec": elapsed,
+                "device": str(DEVICE),
             }
             task["status"] = "done"
             task["phase"] = "done"
@@ -488,9 +581,11 @@ def transform_video():
 @app.route("/download_video")
 def download_video():
     """Download the last generated adversarial video as MP4."""
-    if _last_result_video is None:
+    with _results_lock:
+        data = _last_result_video
+    if data is None:
         return "No video result available", 404
-    buf = io.BytesIO(_last_result_video)
+    buf = io.BytesIO(data)
     return send_file(buf, mimetype="video/mp4", as_attachment=True,
                      download_name="adversarial_video.mp4")
 
