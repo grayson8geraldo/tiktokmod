@@ -1,12 +1,15 @@
 """
-Adversarial Attack — Web Application
-=====================================
+Adversarial Attack — Web Application (TikTok-targeted ensemble)
+================================================================
 Flask web app: pick a target class, upload a source image,
-make the source "become" the target in the eyes of a neural network.
+make the source "become" the target in the eyes of TikTok-like classifiers.
 
-Supports:
-  - Single-model PGD/FGSM (fast, fools ResNet-50 only)
-  - Ensemble MI-DI-TI-FGSM (slower, better transferability across models)
+Ensemble matches TikTok's known vision stack:
+  - ResNet-50         → TikTok moderation fast-screening CNN
+  - EfficientNet-V2-S → TikTok moderation fast-screening CNN
+  - Swin-T            → proxy for Video Swin Transformer backbone
+  - ViT-B/16          → proxy for BEiT3 vision encoder
+  - ConvNeXt-Small    → modern CNN for extra architectural diversity
 
 Usage:
   python webapp.py
@@ -57,28 +60,52 @@ PRESET_TARGETS = [
     {"idx": 113, "name": "Улитка", "icon": "🐌"},
 ]
 
-# ── Load models & labels at startup ─────────────────────────────────────────
+# ── Load TikTok-matched ensemble at startup ─────────────────────────────────
+# Models are grouped by what they proxy in TikTok's stack:
+#   CNN fast-screening:  ResNet-50, EfficientNet-V2-S
+#   Transformer backbones: Swin-T (→ Video Swin), ViT-B/16 (→ BEiT3)
+#   Extra diversity:     ConvNeXt-Small (modern hybrid)
 
-print("[*] Loading ResNet-50 …")
-resnet50 = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-resnet50.eval()
+MODELS = {}
 
-print("[*] Loading VGG-16 …")
-vgg16 = models.vgg16(weights=models.VGG16_Weights.DEFAULT)
-vgg16.eval()
+print("[1/5] Loading ResNet-50 (→ TikTok moderation CNN) …")
+MODELS["ResNet-50"] = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+MODELS["ResNet-50"].eval()
 
-print("[*] Loading DenseNet-121 …")
-densenet121 = models.densenet121(weights=models.DenseNet121_Weights.DEFAULT)
-densenet121.eval()
+print("[2/5] Loading EfficientNet-V2-S (→ TikTok moderation CNN) …")
+MODELS["EfficientNet-V2"] = models.efficientnet_v2_s(
+    weights=models.EfficientNet_V2_S_Weights.DEFAULT)
+MODELS["EfficientNet-V2"].eval()
 
-ENSEMBLE = [resnet50, vgg16, densenet121]
-# Default single model for fast mode
-MODEL = resnet50
+print("[3/5] Loading Swin-T (→ Video Swin Transformer) …")
+MODELS["Swin-T"] = models.swin_t(weights=models.Swin_T_Weights.DEFAULT)
+MODELS["Swin-T"].eval()
+
+print("[4/5] Loading ViT-B/16 (→ BEiT3 vision encoder) …")
+MODELS["ViT-B/16"] = models.vit_b_16(weights=models.ViT_B_16_Weights.DEFAULT)
+MODELS["ViT-B/16"].eval()
+
+print("[5/5] Loading ConvNeXt-Small (extra diversity) …")
+MODELS["ConvNeXt-S"] = models.convnext_small(
+    weights=models.ConvNeXt_Small_Weights.DEFAULT)
+MODELS["ConvNeXt-S"].eval()
+
+ENSEMBLE = list(MODELS.values())
+MODEL_NAMES = list(MODELS.keys())
+
+# TikTok role descriptions for UI
+MODEL_ROLES = {
+    "ResNet-50": "Модерация (CNN)",
+    "EfficientNet-V2": "Модерация (CNN)",
+    "Swin-T": "Video Swin Transformer",
+    "ViT-B/16": "BEiT3 vision encoder",
+    "ConvNeXt-S": "Доп. backbone",
+}
 
 print("[*] Loading ImageNet labels …")
 LABELS = load_imagenet_labels()
 
-print("[✓] Ready — open http://localhost:5000")
+print(f"[✓] {len(ENSEMBLE)} models loaded — open http://localhost:5000")
 
 # ── Store last result for download ───────────────────────────────────────────
 
@@ -101,7 +128,7 @@ def load_image_preserve_aspect(file_storage, size: int = 224) -> torch.Tensor:
 def classify(img_tensor: torch.Tensor, model=None) -> list[dict]:
     """Return top-5 predictions as list of {idx, label, confidence}."""
     if model is None:
-        model = MODEL
+        model = ENSEMBLE[0]
     with torch.no_grad():
         logits = model(normalise(img_tensor))
     probs = F.softmax(logits, dim=1)
@@ -177,24 +204,25 @@ def transform():
     target_class_idx = int(target_class_idx)
     method = request.form.get("method", "ensemble")
     epsilon = float(request.form.get("epsilon", "0.06"))
-    steps = int(request.form.get("steps", "100"))
+    steps = int(request.form.get("steps", "120"))
 
     target_label = LABELS[target_class_idx]
 
     # Load source image (center-crop preserves proportions)
     source_tensor = load_image_preserve_aspect(source_file)
 
-    # Classify source image before attack
-    source_preds = classify(source_tensor)
+    # Classify source image before attack (use ResNet-50 as reference)
+    source_preds = classify(source_tensor, ENSEMBLE[0])
     source_label = source_preds[0]["label"]
     source_conf = source_preds[0]["confidence"]
 
     # Run adversarial attack
     if method == "fgsm":
-        adv_tensor = fgsm_targeted(MODEL, source_tensor, target_class_idx, epsilon)
+        adv_tensor = fgsm_targeted(ENSEMBLE[0], source_tensor,
+                                   target_class_idx, epsilon)
     elif method == "pgd":
         adv_tensor = pgd_targeted(
-            MODEL, source_tensor, target_class_idx, epsilon, steps=steps
+            ENSEMBLE[0], source_tensor, target_class_idx, epsilon, steps=steps
         )
     else:
         # Ensemble MI-DI-TI-FGSM — best transferability
@@ -204,29 +232,28 @@ def transform():
         )
 
     # Classify result on ALL models
-    adv_preds_resnet = classify(adv_tensor, resnet50)
-    adv_preds_vgg = classify(adv_tensor, vgg16)
-    adv_preds_densenet = classify(adv_tensor, densenet121)
-
-    adv_label = adv_preds_resnet[0]["label"]
-    adv_conf = adv_preds_resnet[0]["confidence"]
-    success = adv_preds_resnet[0]["idx"] == target_class_idx
-
-    # Check how many models are fooled
     models_fooled = 0
     model_results = []
-    for name, preds in [("ResNet-50", adv_preds_resnet),
-                        ("VGG-16", adv_preds_vgg),
-                        ("DenseNet-121", adv_preds_densenet)]:
+    first_preds = None
+
+    for name, model in MODELS.items():
+        preds = classify(adv_tensor, model)
+        if first_preds is None:
+            first_preds = preds
         fooled = preds[0]["idx"] == target_class_idx
         if fooled:
             models_fooled += 1
         model_results.append({
             "name": name,
+            "role": MODEL_ROLES[name],
             "label": preds[0]["label"],
             "confidence": preds[0]["confidence"],
             "fooled": fooled,
         })
+
+    adv_label = first_preds[0]["label"]
+    adv_conf = first_preds[0]["confidence"]
+    success = first_preds[0]["idx"] == target_class_idx
 
     # Save result for download
     _last_result_png = tensor_to_png_bytes(adv_tensor)
@@ -239,7 +266,7 @@ def transform():
     return jsonify({
         "success": success,
         "models_fooled": models_fooled,
-        "models_total": 3,
+        "models_total": len(ENSEMBLE),
         "model_results": model_results,
         # Target info
         "target_label": target_label,
@@ -253,7 +280,7 @@ def transform():
         "result_image": tensor_to_base64(adv_tensor),
         "noise_image": noise_to_base64(source_tensor, adv_tensor),
         # Top-5 predictions after attack (ResNet-50)
-        "result_top5": adv_preds_resnet,
+        "result_top5": first_preds,
         # Stats
         "noise_l_inf": round(l_inf, 4),
         "noise_l_2": round(l_2, 4),
