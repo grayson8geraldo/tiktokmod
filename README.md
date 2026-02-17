@@ -24,6 +24,21 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Interactive mode (recommended)
+
+Choose your own image and target class step-by-step:
+
+```bash
+python interactive.py
+```
+
+The interactive tool will:
+1. Ask you for an image (or use a test image)
+2. Show the model's current top-5 predictions
+3. Let you search and pick a target class (e.g. type "shark" to find shark classes)
+4. Configure attack strength
+5. Run the attack, show results, and save the visualisation
+
 ### Quick demo (downloads a sample couch image automatically)
 
 ```bash
