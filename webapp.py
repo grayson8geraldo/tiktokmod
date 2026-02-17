@@ -185,4 +185,9 @@ def transform():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    import argparse
+    parser = argparse.ArgumentParser(description="Adversarial Attack Web App")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
+    parser.add_argument("--port", type=int, default=5000, help="Port (default: 5000)")
+    args = parser.parse_args()
+    app.run(debug=True, host=args.host, port=args.port)
