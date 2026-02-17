@@ -49,24 +49,69 @@
     font-size: 0.95em;
   }
 
-  /* Upload area */
-  .upload-row {
+  /* ── Target class selection ── */
+  .section-title {
+    font-size: 1em;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+
+  .preset-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
     margin-bottom: 24px;
   }
 
+  .preset-btn {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    border-radius: var(--radius);
+    padding: 14px 8px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s, transform 0.1s;
+    color: var(--text);
+    font-size: 0.85em;
+  }
+
+  .preset-btn:hover {
+    border-color: var(--accent);
+    background: #1e1e2e;
+    transform: translateY(-1px);
+  }
+
+  .preset-btn.selected {
+    border-color: var(--accent);
+    background: rgba(108, 92, 231, 0.15);
+    box-shadow: 0 0 12px rgba(108, 92, 231, 0.3);
+  }
+
+  .preset-btn .preset-icon {
+    font-size: 1.8em;
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .preset-btn .preset-name {
+    font-weight: 600;
+    font-size: 0.85em;
+  }
+
+  /* ── Upload area ── */
   .upload-card {
     background: var(--surface);
     border: 2px dashed var(--border);
     border-radius: var(--radius);
-    padding: 24px;
+    padding: 32px 24px;
     text-align: center;
     cursor: pointer;
     transition: border-color 0.2s, background 0.2s;
     position: relative;
     overflow: hidden;
+    margin-bottom: 24px;
   }
 
   .upload-card:hover {
@@ -93,7 +138,7 @@
 
   .upload-card .preview {
     width: 100%;
-    aspect-ratio: 1;
+    max-height: 260px;
     object-fit: contain;
     background: #111;
     border-radius: var(--radius);
@@ -105,12 +150,7 @@
     color: var(--text-dim);
   }
 
-  /* Arrow between cards */
-  .arrow-col {
-    display: none;
-  }
-
-  /* Settings */
+  /* ── Settings ── */
   .settings {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -155,7 +195,7 @@
     border-color: var(--accent);
   }
 
-  /* Button */
+  /* ── Button ── */
   .btn-run {
     display: block;
     width: 100%;
@@ -181,7 +221,7 @@
     cursor: not-allowed;
   }
 
-  /* Progress */
+  /* ── Progress ── */
   .progress {
     display: none;
     text-align: center;
@@ -207,7 +247,7 @@
     font-size: 0.95em;
   }
 
-  /* Results */
+  /* ── Results ── */
   .results {
     display: none;
   }
@@ -280,7 +320,30 @@
     margin-top: 2px;
   }
 
-  /* Top-5 */
+  /* ── Download button ── */
+  .btn-download {
+    display: block;
+    width: 100%;
+    padding: 14px;
+    font-size: 1em;
+    font-weight: 600;
+    border: 2px solid var(--success);
+    border-radius: var(--radius);
+    background: rgba(0, 184, 148, 0.1);
+    color: var(--success);
+    cursor: pointer;
+    transition: background 0.2s, transform 0.1s;
+    margin-bottom: 24px;
+    text-align: center;
+    text-decoration: none;
+  }
+
+  .btn-download:hover {
+    background: rgba(0, 184, 148, 0.2);
+    transform: translateY(-1px);
+  }
+
+  /* ── Top-5 ── */
   .top5 {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -331,7 +394,7 @@
     color: var(--text-dim);
   }
 
-  /* Stats */
+  /* ── Stats ── */
   .stats {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -355,9 +418,12 @@
     margin-top: 4px;
   }
 
-  /* Responsive */
+  /* ── Responsive ── */
   @media (max-width: 640px) {
-    .upload-row, .result-grid, .settings-grid, .stats {
+    .preset-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .result-grid, .settings-grid, .stats {
       grid-template-columns: 1fr;
     }
   }
@@ -367,27 +433,29 @@
 <div class="container">
   <h1>Adversarial Attack Lab</h1>
   <p class="subtitle">
-    Загрузите два изображения: целевое (во что превратить) и исходное (что превращаем).
-    Нейросеть будет обманута — исходное изображение сохранит свой вид, но сеть увидит в нём целевой объект.
+    Выберите целевой класс, загрузите изображение, и нейросеть будет обманута —
+    она увидит в вашей картинке выбранный объект.
   </p>
 
-  <!-- Upload Row -->
-  <div class="upload-row">
-    <div class="upload-card" id="target-card">
-      <input type="file" id="target-input" accept="image/*">
-      <div class="placeholder" id="target-placeholder">
-        <div class="icon">&#127748;</div>
-        <div class="label">Целевое изображение</div>
-        <div class="hint">Чем должна стать картинка<br>(например, пейзаж)</div>
-      </div>
+  <!-- Target class presets -->
+  <div class="section-title">1. Выберите целевой класс (во что превратить)</div>
+  <div class="preset-grid" id="preset-grid">
+    {% for p in presets %}
+    <div class="preset-btn" data-idx="{{ p.idx }}">
+      <span class="preset-icon">{{ p.icon }}</span>
+      <span class="preset-name">{{ p.name }}</span>
     </div>
-    <div class="upload-card" id="source-card">
-      <input type="file" id="source-input" accept="image/*">
-      <div class="placeholder" id="source-placeholder">
-        <div class="icon">&#127820;</div>
-        <div class="label">Исходное изображение</div>
-        <div class="hint">Что будем превращать<br>(например, банан)</div>
-      </div>
+    {% endfor %}
+  </div>
+
+  <!-- Source image upload -->
+  <div class="section-title">2. Загрузите исходное изображение</div>
+  <div class="upload-card" id="source-card">
+    <input type="file" id="source-input" accept="image/*">
+    <div class="placeholder" id="source-placeholder">
+      <div class="icon">&#128444;&#65039;</div>
+      <div class="label">Исходное изображение</div>
+      <div class="hint">Перетащите или нажмите, чтобы выбрать файл</div>
     </div>
   </div>
 
@@ -424,7 +492,7 @@
   <!-- Progress -->
   <div class="progress" id="progress">
     <div class="spinner"></div>
-    <div class="progress-text">Атакуем нейросеть… Это может занять 10-30 секунд.</div>
+    <div class="progress-text">Атакуем нейросеть... Это может занять 10-30 секунд.</div>
   </div>
 
   <!-- Results -->
@@ -458,6 +526,11 @@
       </div>
     </div>
 
+    <!-- Download button -->
+    <a class="btn-download" id="download-btn" href="/download" download="adversarial_result.png">
+      Скачать результат (PNG)
+    </a>
+
     <!-- Top-5 after attack -->
     <div class="top5">
       <h3>Top-5 предсказаний после атаки</h3>
@@ -483,58 +556,64 @@
 </div>
 
 <script>
-const targetInput = document.getElementById('target-input');
+// ── Preset selection ──
+const presetBtns = document.querySelectorAll('.preset-btn');
+let selectedTarget = null;
+
+presetBtns.forEach(btn => {
+  btn.addEventListener('click', () => {
+    presetBtns.forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    selectedTarget = btn.dataset.idx;
+    updateRunButton();
+  });
+});
+
+// ── Source upload ──
 const sourceInput = document.getElementById('source-input');
-const targetCard  = document.getElementById('target-card');
 const sourceCard  = document.getElementById('source-card');
 const runBtn      = document.getElementById('run-btn');
 
-let targetFile = null;
 let sourceFile = null;
 
-function handleUpload(input, card, placeholderId, isTarget) {
+function attachSourceUpload(input) {
   input.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (!file) return;
-
-    if (isTarget) targetFile = file;
-    else sourceFile = file;
+    sourceFile = file;
 
     const reader = new FileReader();
     reader.onload = (ev) => {
-      card.classList.add('has-image');
-      card.innerHTML = `
+      sourceCard.classList.add('has-image');
+      sourceCard.innerHTML = `
         <input type="file" accept="image/*">
         <img class="preview" src="${ev.target.result}" alt="Preview">
-        <div class="preview-label">${isTarget ? 'Целевое' : 'Исходное'} — нажмите чтобы заменить</div>
+        <div class="preview-label">Нажмите чтобы заменить</div>
       `;
-      // Re-attach listener to new input
-      const newInput = card.querySelector('input[type="file"]');
-      handleUpload(newInput, card, placeholderId, isTarget);
+      attachSourceUpload(sourceCard.querySelector('input[type="file"]'));
     };
     reader.readAsDataURL(file);
-
     updateRunButton();
   });
 }
 
-handleUpload(targetInput, targetCard, 'target-placeholder', true);
-handleUpload(sourceInput, sourceCard, 'source-placeholder', false);
+attachSourceUpload(sourceInput);
 
 function updateRunButton() {
-  runBtn.disabled = !(targetFile && sourceFile);
+  runBtn.disabled = !(selectedTarget && sourceFile);
 }
 
+// ── Run attack ──
 runBtn.addEventListener('click', async () => {
-  if (!targetFile || !sourceFile) return;
+  if (!selectedTarget || !sourceFile) return;
 
   runBtn.disabled = true;
   document.getElementById('progress').classList.add('active');
   document.getElementById('results').classList.remove('active');
 
   const formData = new FormData();
-  formData.append('target_image', targetFile);
   formData.append('source_image', sourceFile);
+  formData.append('target_class', selectedTarget);
   formData.append('method', document.getElementById('method').value);
   formData.append('epsilon', document.getElementById('epsilon').value);
   formData.append('steps', document.getElementById('steps').value);
@@ -555,7 +634,7 @@ runBtn.addEventListener('click', async () => {
       statusEl.textContent = `Атака успешна! Нейросеть теперь видит "${data.result_label}" вместо "${data.source_label}"`;
     } else {
       statusEl.className = 'result-status fail';
-      statusEl.textContent = `Атака не достигла цели. Результат: "${data.result_label}". Попробуйте увеличить epsilon или шаги.`;
+      statusEl.textContent = `Атака не достигла цели. Результат: "${data.result_label}" (цель: "${data.target_label}"). Попробуйте увеличить epsilon или шаги.`;
     }
 
     // Images
@@ -568,7 +647,7 @@ runBtn.addEventListener('click', async () => {
     document.getElementById('res-source-conf').textContent  = data.source_confidence + '%';
     document.getElementById('res-result-label').textContent = data.result_label;
     document.getElementById('res-result-conf').textContent  = data.result_confidence + '%';
-    document.getElementById('res-noise-info').textContent   = `L∞ = ${data.noise_l_inf}`;
+    document.getElementById('res-noise-info').textContent   = `L\u221E = ${data.noise_l_inf}`;
 
     // Top-5
     const top5 = document.getElementById('top5-container');
