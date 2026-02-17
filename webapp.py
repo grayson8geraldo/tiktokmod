@@ -36,7 +36,11 @@ from adversarial_attack import (
     fgsm_targeted,
     ensemble_mi_di_ti_fgsm,
 )
-from video_attack import attack_video_fast, attack_video_warmstart
+try:
+    from video_attack import attack_video_fast, attack_video_warmstart
+    VIDEO_SUPPORT = True
+except ImportError:
+    VIDEO_SUPPORT = False
 
 app = Flask(__name__)
 
@@ -390,6 +394,9 @@ def download():
 def transform_video():
     """Start video adversarial attack in background thread. Returns task_id."""
     global _last_result_video
+
+    if not VIDEO_SUPPORT:
+        return jsonify({"error": "Видео не поддерживается: установите opencv-python-headless (pip install opencv-python-headless)"}), 400
 
     source_file = request.files.get("source_video")
     target_class_idx = request.form.get("target_class")
