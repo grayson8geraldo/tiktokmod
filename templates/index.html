@@ -237,25 +237,47 @@
     display: none;
     text-align: center;
     margin-bottom: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
   }
 
   .progress.active { display: block; }
 
-  .spinner {
-    width: 40px;
-    height: 40px;
-    border: 3px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin: 0 auto 12px;
+  .progress-bar-wrap {
+    width: 100%;
+    height: 12px;
+    background: var(--bg);
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 16px 0 12px;
   }
 
-  @keyframes spin { to { transform: rotate(360deg); } }
+  .progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #6c5ce7, #a29bfe);
+    border-radius: 6px;
+    transition: width 0.3s ease;
+    width: 0%;
+  }
+
+  .progress-percent {
+    font-size: 1.5em;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
 
   .progress-text {
     color: var(--text-dim);
-    font-size: 0.95em;
+    font-size: 0.9em;
+  }
+
+  .progress-phase {
+    color: var(--text-dim);
+    font-size: 0.8em;
+    margin-top: 6px;
   }
 
   /* ── Results ── */
@@ -594,8 +616,12 @@
 
   <!-- Progress -->
   <div class="progress" id="progress">
-    <div class="spinner"></div>
-    <div class="progress-text" id="progress-text">Атакуем 5 моделей из стека TikTok... Это может занять 1-3 минуты.</div>
+    <div class="progress-percent" id="progress-percent">0%</div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <div class="progress-text" id="progress-text">Запуск атаки...</div>
+    <div class="progress-phase" id="progress-phase"></div>
   </div>
 
   <!-- Results -->
@@ -669,8 +695,8 @@
         <div class="stat-label">L&#8734; норма шума</div>
       </div>
       <div>
-        <div class="stat-value" id="stat-pixel"></div>
-        <div class="stat-label">Макс. &#916; пиксель</div>
+        <div class="stat-value" id="stat-resolution"></div>
+        <div class="stat-label">Разрешение выхода</div>
       </div>
     </div>
   </div>
@@ -746,29 +772,139 @@ function updateRunButton() {
   runBtn.disabled = !(selectedTarget && sourceFile);
 }
 
+// ── Phase labels ──
+const phaseLabels = {
+  starting: 'Запуск...',
+  loading: 'Загрузка изображений...',
+  attacking: 'Атака нейросетей...',
+  upscaling: 'Масштабирование шума на полное разрешение...',
+  classifying: 'Проверка по всем моделям...',
+  done: 'Готово!'
+};
+
+// ── Display results ──
+function showResults(data) {
+  const statusEl = document.getElementById('result-status');
+  const fooled = data.models_fooled;
+  const total = data.models_total;
+
+  if (fooled === total) {
+    statusEl.className = 'result-status success';
+    statusEl.textContent = `Все ${total} модели обмануты! Все видят "${data.target_label}" вместо "${data.source_label}"`;
+  } else if (fooled > 0) {
+    statusEl.className = 'result-status partial';
+    statusEl.textContent = `Обмануто ${fooled} из ${total} моделей. Цель: "${data.target_label}". Попробуйте увеличить epsilon или шаги.`;
+  } else {
+    statusEl.className = 'result-status fail';
+    statusEl.textContent = `Ни одна модель не обманута. Цель: "${data.target_label}". Увеличьте epsilon и шаги.`;
+  }
+
+  document.getElementById('res-source').src = 'data:image/png;base64,' + data.source_image;
+  document.getElementById('res-noise').src  = 'data:image/png;base64,' + data.noise_image;
+  document.getElementById('res-result').src = 'data:image/png;base64,' + data.result_image;
+
+  document.getElementById('res-source-label').textContent = data.source_label;
+  document.getElementById('res-source-conf').textContent  = data.source_confidence + '%';
+  document.getElementById('res-result-label').textContent = data.result_label;
+  document.getElementById('res-result-conf').textContent  = data.result_confidence + '%';
+  document.getElementById('res-noise-info').textContent   = `L\u221E = ${data.noise_l_inf}`;
+
+  const modelContainer = document.getElementById('model-verify-container');
+  modelContainer.innerHTML = '';
+  data.model_results.forEach(m => {
+    const statusClass = m.fooled ? 'fooled' : 'not-fooled';
+    const statusIcon = m.fooled ? '\u2713' : '\u2717';
+    const role = m.role ? `<span style="color:var(--text-dim);font-size:0.75em;display:block">${m.role}</span>` : '';
+    modelContainer.innerHTML += `
+      <div class="model-row">
+        <div class="model-status ${statusClass}">${statusIcon}</div>
+        <div class="model-name">${m.name}${role}</div>
+        <div class="model-prediction">&#8594; ${m.label}</div>
+        <div class="model-conf-val">${m.confidence}%</div>
+      </div>`;
+  });
+
+  const top5 = document.getElementById('top5-container');
+  top5.innerHTML = '';
+  data.result_top5.forEach(p => {
+    top5.innerHTML += `
+      <div class="top5-row">
+        <div class="top5-label">${p.label}</div>
+        <div class="top5-bar-wrap">
+          <div class="top5-bar" style="width: ${p.confidence}%"></div>
+        </div>
+        <div class="top5-conf">${p.confidence}%</div>
+      </div>`;
+  });
+
+  document.getElementById('stat-method').textContent = data.method;
+  document.getElementById('stat-fooled').textContent = `${data.models_fooled}/${data.models_total}`;
+  document.getElementById('stat-linf').textContent   = data.noise_l_inf;
+  document.getElementById('stat-resolution').textContent = data.output_resolution || '224x224';
+
+  document.getElementById('results').classList.add('active');
+}
+
+// ── Progress polling ──
+function pollProgress(taskId) {
+  const progressBar = document.getElementById('progress-bar');
+  const progressPercent = document.getElementById('progress-percent');
+  const progressText = document.getElementById('progress-text');
+  const progressPhase = document.getElementById('progress-phase');
+
+  const poll = async () => {
+    try {
+      const resp = await fetch(`/progress/${taskId}`);
+      const data = await resp.json();
+
+      if (data.status === 'running') {
+        const pct = data.total > 0 ? Math.round((data.progress / data.total) * 100) : 0;
+        progressBar.style.width = pct + '%';
+        progressPercent.textContent = pct + '%';
+        progressText.textContent = `Шаг ${data.progress} / ${data.total}`;
+        progressPhase.textContent = phaseLabels[data.phase] || data.phase;
+        setTimeout(poll, 300);
+      } else if (data.status === 'done') {
+        progressBar.style.width = '100%';
+        progressPercent.textContent = '100%';
+        progressText.textContent = 'Готово!';
+        progressPhase.textContent = '';
+        setTimeout(() => {
+          document.getElementById('progress').classList.remove('active');
+          showResults(data.result);
+          runBtn.disabled = false;
+        }, 400);
+      } else if (data.status === 'error') {
+        document.getElementById('progress').classList.remove('active');
+        alert('Error: ' + (data.error || 'Unknown error'));
+        runBtn.disabled = false;
+      }
+    } catch (err) {
+      setTimeout(poll, 1000);
+    }
+  };
+
+  poll();
+}
+
 // ── Run attack ──
 runBtn.addEventListener('click', async () => {
   if (!selectedTarget || !sourceFile) return;
 
-  const method = document.getElementById('method').value;
   runBtn.disabled = true;
+
+  // Reset progress
+  document.getElementById('progress-bar').style.width = '0%';
+  document.getElementById('progress-percent').textContent = '0%';
+  document.getElementById('progress-text').textContent = 'Запуск...';
+  document.getElementById('progress-phase').textContent = '';
   document.getElementById('progress').classList.add('active');
   document.getElementById('results').classList.remove('active');
-
-  // Update progress text based on method
-  const progressText = document.getElementById('progress-text');
-  if (method === 'ensemble') {
-    progressText.textContent = 'Атакуем 5 моделей из стека TikTok... Это может занять 1-3 минуты.';
-  } else if (method === 'pgd') {
-    progressText.textContent = 'Атакуем ResNet-50... Это может занять 10-30 секунд.';
-  } else {
-    progressText.textContent = 'Выполняем FGSM атаку...';
-  }
 
   const formData = new FormData();
   formData.append('source_image', sourceFile);
   formData.append('target_class', selectedTarget);
-  formData.append('method', method);
+  formData.append('method', document.getElementById('method').value);
   formData.append('epsilon', document.getElementById('epsilon').value);
   formData.append('steps', document.getElementById('steps').value);
 
@@ -777,80 +913,18 @@ runBtn.addEventListener('click', async () => {
     const data = await resp.json();
 
     if (data.error) {
+      document.getElementById('progress').classList.remove('active');
       alert(data.error);
+      runBtn.disabled = false;
       return;
     }
 
-    // Status
-    const statusEl = document.getElementById('result-status');
-    const fooled = data.models_fooled;
-    const total = data.models_total;
-
-    if (fooled === total) {
-      statusEl.className = 'result-status success';
-      statusEl.textContent = `Все ${total} модели обмануты! Все видят "${data.target_label}" вместо "${data.source_label}"`;
-    } else if (fooled > 0) {
-      statusEl.className = 'result-status partial';
-      statusEl.textContent = `Обмануто ${fooled} из ${total} моделей. Цель: "${data.target_label}". Попробуйте увеличить epsilon или шаги.`;
-    } else {
-      statusEl.className = 'result-status fail';
-      statusEl.textContent = `Ни одна модель не обманута. Цель: "${data.target_label}". Увеличьте epsilon и шаги.`;
-    }
-
-    // Images
-    document.getElementById('res-source').src = 'data:image/png;base64,' + data.source_image;
-    document.getElementById('res-noise').src  = 'data:image/png;base64,' + data.noise_image;
-    document.getElementById('res-result').src = 'data:image/png;base64,' + data.result_image;
-
-    // Labels
-    document.getElementById('res-source-label').textContent = data.source_label;
-    document.getElementById('res-source-conf').textContent  = data.source_confidence + '%';
-    document.getElementById('res-result-label').textContent = data.result_label;
-    document.getElementById('res-result-conf').textContent  = data.result_confidence + '%';
-    document.getElementById('res-noise-info').textContent   = `L\u221E = ${data.noise_l_inf}`;
-
-    // Model verification
-    const modelContainer = document.getElementById('model-verify-container');
-    modelContainer.innerHTML = '';
-    data.model_results.forEach(m => {
-      const statusClass = m.fooled ? 'fooled' : 'not-fooled';
-      const statusIcon = m.fooled ? '\u2713' : '\u2717';
-      const role = m.role ? `<span style="color:var(--text-dim);font-size:0.75em;display:block">${m.role}</span>` : '';
-      modelContainer.innerHTML += `
-        <div class="model-row">
-          <div class="model-status ${statusClass}">${statusIcon}</div>
-          <div class="model-name">${m.name}${role}</div>
-          <div class="model-prediction">&#8594; ${m.label}</div>
-          <div class="model-conf-val">${m.confidence}%</div>
-        </div>`;
-    });
-
-    // Top-5
-    const top5 = document.getElementById('top5-container');
-    top5.innerHTML = '';
-    data.result_top5.forEach(p => {
-      top5.innerHTML += `
-        <div class="top5-row">
-          <div class="top5-label">${p.label}</div>
-          <div class="top5-bar-wrap">
-            <div class="top5-bar" style="width: ${p.confidence}%"></div>
-          </div>
-          <div class="top5-conf">${p.confidence}%</div>
-        </div>`;
-    });
-
-    // Stats
-    document.getElementById('stat-method').textContent = data.method;
-    document.getElementById('stat-fooled').textContent = `${data.models_fooled}/${data.models_total}`;
-    document.getElementById('stat-linf').textContent   = data.noise_l_inf;
-    document.getElementById('stat-pixel').textContent   = data.max_pixel_change;
-
-    document.getElementById('results').classList.add('active');
+    // Start polling
+    pollProgress(data.task_id);
 
   } catch (err) {
-    alert('Error: ' + err.message);
-  } finally {
     document.getElementById('progress').classList.remove('active');
+    alert('Error: ' + err.message);
     runBtn.disabled = false;
   }
 });

@@ -4,12 +4,10 @@ Adversarial Attack — Web Application (TikTok-targeted ensemble)
 Flask web app: pick a target class, upload a source image,
 make the source "become" the target in the eyes of TikTok-like classifiers.
 
-Ensemble matches TikTok's known vision stack:
-  - ResNet-50         → TikTok moderation fast-screening CNN
-  - EfficientNet-V2-S → TikTok moderation fast-screening CNN
-  - Swin-T            → proxy for Video Swin Transformer backbone
-  - ViT-B/16          → proxy for BEiT3 vision encoder
-  - ConvNeXt-Small    → modern CNN for extra architectural diversity
+Features:
+  - 5-model ensemble matched to TikTok's vision stack
+  - Real-time progress bar via threaded processing + polling
+  - Full-resolution output (noise upscaled to original image size)
 
 Usage:
   python webapp.py
@@ -19,6 +17,8 @@ Usage:
 import base64
 import io
 import json
+import threading
+import uuid
 
 import numpy as np
 import torch
@@ -61,10 +61,6 @@ PRESET_TARGETS = [
 ]
 
 # ── Load TikTok-matched ensemble at startup ─────────────────────────────────
-# Models are grouped by what they proxy in TikTok's stack:
-#   CNN fast-screening:  ResNet-50, EfficientNet-V2-S
-#   Transformer backbones: Swin-T (→ Video Swin), ViT-B/16 (→ BEiT3)
-#   Extra diversity:     ConvNeXt-Small (modern hybrid)
 
 MODELS = {}
 
@@ -91,9 +87,7 @@ MODELS["ConvNeXt-S"] = models.convnext_small(
 MODELS["ConvNeXt-S"].eval()
 
 ENSEMBLE = list(MODELS.values())
-MODEL_NAMES = list(MODELS.keys())
 
-# TikTok role descriptions for UI
 MODEL_ROLES = {
     "ResNet-50": "Модерация (CNN)",
     "EfficientNet-V2": "Модерация (CNN)",
@@ -107,22 +101,34 @@ LABELS = load_imagenet_labels()
 
 print(f"[✓] {len(ENSEMBLE)} models loaded — open http://localhost:5000")
 
-# ── Store last result for download ───────────────────────────────────────────
+# ── Task tracking for async processing ───────────────────────────────────────
 
+_tasks: dict = {}
 _last_result_png: bytes | None = None
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-def load_image_preserve_aspect(file_storage, size: int = 224) -> torch.Tensor:
-    """Load uploaded image using center-crop to preserve aspect ratio."""
-    img = Image.open(file_storage).convert("RGB")
+def load_image_for_attack(img_bytes: bytes, size: int = 224) -> torch.Tensor:
+    """Load image resized to model input size (stretches to square)."""
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
     transform = transforms.Compose([
-        transforms.Resize(size),       # shortest side → 224
-        transforms.CenterCrop(size),   # crop center square (no stretching)
+        transforms.Resize((size, size)),
         transforms.ToTensor(),
     ])
-    return transform(img).unsqueeze(0)  # 1×3×224×224
+    return transform(img).unsqueeze(0)
+
+
+def load_image_full_res(img_bytes: bytes) -> torch.Tensor:
+    """Load image at original resolution."""
+    img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    return transforms.ToTensor()(img).unsqueeze(0)
+
+
+def get_image_dimensions(img_bytes: bytes) -> tuple[int, int]:
+    """Get (width, height) of image."""
+    img = Image.open(io.BytesIO(img_bytes))
+    return img.size  # (W, H)
 
 
 def classify(img_tensor: torch.Tensor, model=None) -> list[dict]:
@@ -187,10 +193,7 @@ def index():
 
 @app.route("/transform", methods=["POST"])
 def transform():
-    """
-    Accept uploaded source image + target class index + settings.
-    Run adversarial attack and return results as JSON.
-    """
+    """Start adversarial attack in background thread. Returns task_id."""
     global _last_result_png
 
     source_file = request.files.get("source_image")
@@ -201,94 +204,168 @@ def transform():
     if target_class_idx is None:
         return jsonify({"error": "Выберите целевой класс."}), 400
 
+    # Read file into memory (needed for thread)
+    img_bytes = source_file.read()
     target_class_idx = int(target_class_idx)
     method = request.form.get("method", "ensemble")
     epsilon = float(request.form.get("epsilon", "0.06"))
     steps = int(request.form.get("steps", "120"))
 
-    target_label = LABELS[target_class_idx]
+    task_id = str(uuid.uuid4())
+    _tasks[task_id] = {
+        "progress": 0,
+        "total": steps,
+        "phase": "starting",
+        "status": "running",
+        "result": None,
+    }
 
-    # Load source image (center-crop preserves proportions)
-    source_tensor = load_image_preserve_aspect(source_file)
+    def run_attack():
+        global _last_result_png
+        try:
+            task = _tasks[task_id]
+            target_label = LABELS[target_class_idx]
 
-    # Classify source image before attack (use ResNet-50 as reference)
-    source_preds = classify(source_tensor, ENSEMBLE[0])
-    source_label = source_preds[0]["label"]
-    source_conf = source_preds[0]["confidence"]
+            # ── Phase 1: Load images ──
+            task["phase"] = "loading"
+            source_224 = load_image_for_attack(img_bytes, 224)
+            source_full = load_image_full_res(img_bytes)
+            orig_h, orig_w = source_full.shape[2], source_full.shape[3]
 
-    # Run adversarial attack
-    if method == "fgsm":
-        adv_tensor = fgsm_targeted(ENSEMBLE[0], source_tensor,
-                                   target_class_idx, epsilon)
-    elif method == "pgd":
-        adv_tensor = pgd_targeted(
-            ENSEMBLE[0], source_tensor, target_class_idx, epsilon, steps=steps
-        )
-    else:
-        # Ensemble MI-DI-TI-FGSM — best transferability
-        adv_tensor = ensemble_mi_di_ti_fgsm(
-            ENSEMBLE, source_tensor, target_class_idx,
-            epsilon=epsilon, steps=steps,
-        )
+            # Classify source
+            source_preds = classify(source_224, ENSEMBLE[0])
+            source_label = source_preds[0]["label"]
+            source_conf = source_preds[0]["confidence"]
 
-    # Classify result on ALL models
-    models_fooled = 0
-    model_results = []
-    first_preds = None
+            # ── Phase 2: Attack at 224x224 ──
+            task["phase"] = "attacking"
 
-    for name, model in MODELS.items():
-        preds = classify(adv_tensor, model)
-        if first_preds is None:
-            first_preds = preds
-        fooled = preds[0]["idx"] == target_class_idx
-        if fooled:
-            models_fooled += 1
-        model_results.append({
-            "name": name,
-            "role": MODEL_ROLES[name],
-            "label": preds[0]["label"],
-            "confidence": preds[0]["confidence"],
-            "fooled": fooled,
+            def on_progress(step, total):
+                task["progress"] = step + 1
+                task["total"] = total
+
+            if method == "fgsm":
+                task["total"] = 1
+                adv_224 = fgsm_targeted(ENSEMBLE[0], source_224,
+                                        target_class_idx, epsilon)
+                task["progress"] = 1
+            elif method == "pgd":
+                adv_224 = pgd_targeted(
+                    ENSEMBLE[0], source_224, target_class_idx,
+                    epsilon, steps=steps, progress_callback=on_progress,
+                )
+            else:
+                adv_224 = ensemble_mi_di_ti_fgsm(
+                    ENSEMBLE, source_224, target_class_idx,
+                    epsilon=epsilon, steps=steps,
+                    progress_callback=on_progress,
+                )
+
+            # ── Phase 3: Upscale noise to full resolution ──
+            task["phase"] = "upscaling"
+            noise_224 = adv_224 - source_224
+            noise_full = F.interpolate(
+                noise_224, size=(orig_h, orig_w),
+                mode='bilinear', align_corners=False,
+            )
+            adv_full = torch.clamp(source_full + noise_full, 0, 1)
+
+            # ── Phase 4: Classify on all models ──
+            task["phase"] = "classifying"
+
+            models_fooled = 0
+            model_results = []
+            first_preds = None
+
+            for name, model in MODELS.items():
+                preds = classify(adv_224, model)
+                if first_preds is None:
+                    first_preds = preds
+                fooled = preds[0]["idx"] == target_class_idx
+                if fooled:
+                    models_fooled += 1
+                model_results.append({
+                    "name": name,
+                    "role": MODEL_ROLES[name],
+                    "label": preds[0]["label"],
+                    "confidence": preds[0]["confidence"],
+                    "fooled": fooled,
+                })
+
+            adv_label = first_preds[0]["label"]
+            adv_conf = first_preds[0]["confidence"]
+            success = first_preds[0]["idx"] == target_class_idx
+
+            # Save full-res result for download
+            _last_result_png = tensor_to_png_bytes(adv_full)
+
+            # Noise stats
+            noise = adv_224 - source_224
+            l_inf = noise.abs().max().item()
+            l_2 = noise.norm(2).item()
+
+            task["result"] = {
+                "success": success,
+                "models_fooled": models_fooled,
+                "models_total": len(ENSEMBLE),
+                "model_results": model_results,
+                "target_label": target_label,
+                "source_label": source_label,
+                "source_confidence": source_conf,
+                "source_image": tensor_to_base64(source_224),
+                "result_label": adv_label,
+                "result_confidence": adv_conf,
+                "result_image": tensor_to_base64(adv_224),
+                "noise_image": noise_to_base64(source_224, adv_224),
+                "result_top5": first_preds,
+                "noise_l_inf": round(l_inf, 4),
+                "noise_l_2": round(l_2, 4),
+                "max_pixel_change": round(l_inf * 255, 1),
+                "method": method.upper(),
+                "epsilon": epsilon,
+                "steps": steps,
+                "output_resolution": f"{orig_w}x{orig_h}",
+            }
+            task["status"] = "done"
+            task["phase"] = "done"
+
+        except Exception as e:
+            _tasks[task_id]["status"] = "error"
+            _tasks[task_id]["error"] = str(e)
+
+    thread = threading.Thread(target=run_attack, daemon=True)
+    thread.start()
+
+    return jsonify({"task_id": task_id})
+
+
+@app.route("/progress/<task_id>")
+def progress(task_id):
+    """Poll progress of a running attack task."""
+    task = _tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+
+    if task["status"] == "error":
+        return jsonify({
+            "status": "error",
+            "error": task.get("error", "Unknown error"),
         })
 
-    adv_label = first_preds[0]["label"]
-    adv_conf = first_preds[0]["confidence"]
-    success = first_preds[0]["idx"] == target_class_idx
-
-    # Save result for download
-    _last_result_png = tensor_to_png_bytes(adv_tensor)
-
-    # Noise stats
-    noise = adv_tensor - source_tensor
-    l_inf = noise.abs().max().item()
-    l_2 = noise.norm(2).item()
+    if task["status"] == "done":
+        result = task["result"]
+        # Clean up task
+        del _tasks[task_id]
+        return jsonify({
+            "status": "done",
+            "result": result,
+        })
 
     return jsonify({
-        "success": success,
-        "models_fooled": models_fooled,
-        "models_total": len(ENSEMBLE),
-        "model_results": model_results,
-        # Target info
-        "target_label": target_label,
-        # Source image info (before attack)
-        "source_label": source_label,
-        "source_confidence": source_conf,
-        "source_image": tensor_to_base64(source_tensor),
-        # Result
-        "result_label": adv_label,
-        "result_confidence": adv_conf,
-        "result_image": tensor_to_base64(adv_tensor),
-        "noise_image": noise_to_base64(source_tensor, adv_tensor),
-        # Top-5 predictions after attack (ResNet-50)
-        "result_top5": first_preds,
-        # Stats
-        "noise_l_inf": round(l_inf, 4),
-        "noise_l_2": round(l_2, 4),
-        "max_pixel_change": round(l_inf * 255, 1),
-        # Settings used
-        "method": method.upper(),
-        "epsilon": epsilon,
-        "steps": steps,
+        "status": "running",
+        "progress": task["progress"],
+        "total": task["total"],
+        "phase": task["phase"],
     })
 
 
@@ -308,4 +385,4 @@ if __name__ == "__main__":
     parser.add_argument("--host", default="0.0.0.0", help="Host to bind (default: 0.0.0.0)")
     parser.add_argument("--port", type=int, default=5000, help="Port (default: 5000)")
     args = parser.parse_args()
-    app.run(debug=True, host=args.host, port=args.port)
+    app.run(debug=True, host=args.host, port=args.port, threaded=True)

@@ -111,7 +111,8 @@ def fgsm_targeted(model: torch.nn.Module, img: torch.Tensor,
 
 def pgd_targeted(model: torch.nn.Module, img: torch.Tensor,
                  target_class: int, epsilon: float = 0.03,
-                 alpha: float = 0.005, steps: int = 40) -> torch.Tensor:
+                 alpha: float = 0.005, steps: int = 40,
+                 progress_callback=None) -> torch.Tensor:
     """
     Projected Gradient Descent (targeted, iterative).
 
@@ -119,7 +120,9 @@ def pgd_targeted(model: torch.nn.Module, img: torch.Tensor,
     into the epsilon-ball around the original image.
     """
     adv = img.clone()
-    for _ in range(steps):
+    for step in range(steps):
+        if progress_callback:
+            progress_callback(step, steps)
         adv.requires_grad_(True)
         logits = model(normalise(adv))
         loss = F.cross_entropy(logits, torch.tensor([target_class]))
@@ -174,6 +177,7 @@ def ensemble_mi_di_ti_fgsm(
     momentum: float = 1.0,
     di_prob: float = 0.7,
     ti_kernel_size: int = 5,
+    progress_callback=None,
 ) -> torch.Tensor:
     """
     Ensemble MI-DI-TI-FGSM (targeted).
@@ -193,6 +197,8 @@ def ensemble_mi_di_ti_fgsm(
     target_tensor = torch.tensor([target_class])
 
     for step in range(steps):
+        if progress_callback:
+            progress_callback(step, steps)
         adv.requires_grad_(True)
         total_grad = torch.zeros_like(img)
 
