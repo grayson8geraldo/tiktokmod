@@ -8,9 +8,12 @@ Two modes:
   - Quality (warm-start): attack keyframes, interpolate noise between them (~15-40 min)
 
 Requires: opencv-python-headless
+Audio preservation requires: ffmpeg (system binary)
 """
 
 import io
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -27,7 +30,66 @@ from adversarial_attack import (
 )
 
 
+# ── Audio helpers ─────────────────────────────────────────────────────────────
+
+def _has_ffmpeg() -> bool:
+    """Check if ffmpeg is available on the system."""
+    return shutil.which("ffmpeg") is not None
+
+
+def _extract_audio(video_path: str, audio_path: str) -> bool:
+    """Extract audio track from video to a separate file. Returns True if audio exists."""
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", video_path, "-vn", "-acodec", "copy", audio_path],
+            capture_output=True, timeout=60,
+        )
+        return result.returncode == 0 and Path(audio_path).stat().st_size > 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
+def _mux_audio(video_path: str, audio_path: str, output_path: str) -> bool:
+    """Mux video (no audio) + audio into a single file."""
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-shortest",
+                output_path,
+            ],
+            capture_output=True, timeout=120,
+        )
+        return result.returncode == 0 and Path(output_path).stat().st_size > 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 # ── Frame I/O ────────────────────────────────────────────────────────────────
+
+def extract_frames_from_path(video_path: str) -> tuple[list[np.ndarray], float, int, int]:
+    """
+    Extract all frames from a video file on disk.
+    Returns: (frames_rgb_list, fps, width, height)
+    """
+    cap = cv2.VideoCapture(video_path)
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    frames = []
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    cap.release()
+    return frames, fps, width, height
+
 
 def extract_frames(video_bytes: bytes) -> tuple[list[np.ndarray], float, int, int]:
     """
@@ -40,21 +102,9 @@ def extract_frames(video_bytes: bytes) -> tuple[list[np.ndarray], float, int, in
     tmp_path = tmp.name
     tmp.close()
 
-    cap = cv2.VideoCapture(tmp_path)
-    fps = cap.get(cv2.CAP_PROP_FPS)
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-
-    frames = []
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-    cap.release()
-
+    result = extract_frames_from_path(tmp_path)
     Path(tmp_path).unlink(missing_ok=True)
-    return frames, fps, width, height
+    return result
 
 
 def save_video(frames_rgb: list[np.ndarray], fps: float, output_path: str) -> None:
@@ -110,60 +160,92 @@ def attack_video_fast(
 
     progress_callback(phase, frame_idx, total_frames, step, total_steps)
     """
-    # Extract frames
-    if progress_callback:
-        progress_callback("extracting", 0, 0, 0, 0)
-    frames, fps, orig_w, orig_h = extract_frames(video_bytes)
-    total_frames = len(frames)
+    # Save input to temp file (reused for frame extraction + audio extraction)
+    tmp_input = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp_input.write(video_bytes)
+    tmp_input.flush()
+    tmp_input.close()
+    input_path = tmp_input.name
 
-    # Pick middle frame as representative
-    mid_idx = total_frames // 2
-    mid_224 = frame_to_tensor_224(frames[mid_idx])
+    try:
+        # Extract audio track (if ffmpeg available)
+        audio_path = input_path + ".audio.aac"
+        has_audio = _has_ffmpeg() and _extract_audio(input_path, audio_path)
 
-    # Attack the representative frame
-    def on_step(step, total):
+        # Extract frames
         if progress_callback:
-            progress_callback("attacking", 0, 1, step + 1, total)
+            progress_callback("extracting", 0, 0, 0, 0)
+        frames, fps, orig_w, orig_h = extract_frames_from_path(input_path)
+        total_frames = len(frames)
 
-    adv_224 = ensemble_mi_di_ti_fgsm(
-        ensemble, mid_224, target_class,
-        epsilon=epsilon, steps=steps,
-        progress_callback=on_step,
-        compression_robust=compression_robust,
-    )
+        # Pick middle frame as representative
+        mid_idx = total_frames // 2
+        mid_224 = frame_to_tensor_224(frames[mid_idx])
 
-    # Compute noise at 224x224, upscale to full resolution
-    noise_224 = adv_224 - mid_224
-    noise_full = F.interpolate(
-        noise_224, size=(orig_h, orig_w),
-        mode="bilinear", align_corners=False,
-    )
+        # Attack the representative frame
+        def on_step(step, total):
+            if progress_callback:
+                progress_callback("attacking", 0, 1, step + 1, total)
 
-    # Apply same noise to all frames
-    if progress_callback:
-        progress_callback("applying", 0, total_frames, 0, 0)
+        adv_224 = ensemble_mi_di_ti_fgsm(
+            ensemble, mid_224, target_class,
+            epsilon=epsilon, steps=steps,
+            progress_callback=on_step,
+            compression_robust=compression_robust,
+        )
 
-    output_frames = []
-    for i, frame in enumerate(frames):
+        # Compute noise at 224x224, upscale to full resolution
+        noise_224 = adv_224 - mid_224
+        noise_full = F.interpolate(
+            noise_224, size=(orig_h, orig_w),
+            mode="bilinear", align_corners=False,
+        )
+
+        # Apply same noise to all frames
         if progress_callback:
-            progress_callback("applying", i + 1, total_frames, 0, 0)
-        full_tensor = frame_to_tensor_full(frame)
-        adv_full = torch.clamp(full_tensor + noise_full, 0, 1)
-        output_frames.append(tensor_to_frame(adv_full))
+            progress_callback("applying", 0, total_frames, 0, 0)
 
-    # Save video
-    if progress_callback:
-        progress_callback("saving", 0, 0, 0, 0)
+        output_frames = []
+        for i, frame in enumerate(frames):
+            if progress_callback:
+                progress_callback("applying", i + 1, total_frames, 0, 0)
+            full_tensor = frame_to_tensor_full(frame)
+            adv_full = torch.clamp(full_tensor + noise_full, 0, 1)
+            output_frames.append(tensor_to_frame(adv_full))
 
-    tmp_out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    tmp_out.close()
-    save_video(output_frames, fps, tmp_out.name)
+        # Save video (frames only)
+        if progress_callback:
+            progress_callback("saving", 0, 0, 0, 0)
 
-    with open(tmp_out.name, "rb") as f:
-        result_bytes = f.read()
-    Path(tmp_out.name).unlink(missing_ok=True)
+        tmp_video = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        tmp_video.close()
+        save_video(output_frames, fps, tmp_video.name)
 
-    return result_bytes
+        # Mux audio back in if available
+        if has_audio:
+            tmp_final = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+            tmp_final.close()
+            if _mux_audio(tmp_video.name, audio_path, tmp_final.name):
+                # Use the muxed version
+                with open(tmp_final.name, "rb") as f:
+                    result_bytes = f.read()
+                Path(tmp_final.name).unlink(missing_ok=True)
+            else:
+                # Fallback to video-only
+                with open(tmp_video.name, "rb") as f:
+                    result_bytes = f.read()
+                Path(tmp_final.name).unlink(missing_ok=True)
+        else:
+            with open(tmp_video.name, "rb") as f:
+                result_bytes = f.read()
+
+        Path(tmp_video.name).unlink(missing_ok=True)
+        return result_bytes
+
+    finally:
+        # Cleanup temp files
+        Path(input_path).unlink(missing_ok=True)
+        Path(input_path + ".audio.aac").unlink(missing_ok=True)
 
 
 # ── Quality mode (warm-start) ────────────────────────────────────────────────
@@ -188,99 +270,129 @@ def attack_video_warmstart(
 
     progress_callback(phase, frame_idx, total_frames, step, total_steps)
     """
-    # Extract frames
-    if progress_callback:
-        progress_callback("extracting", 0, 0, 0, 0)
-    frames, fps, orig_w, orig_h = extract_frames(video_bytes)
-    total_frames = len(frames)
+    # Save input to temp file (reused for frame extraction + audio extraction)
+    tmp_input = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+    tmp_input.write(video_bytes)
+    tmp_input.flush()
+    tmp_input.close()
+    input_path = tmp_input.name
 
-    # Determine keyframe indices
-    keyframe_interval = max(1, int(round(fps / keyframe_fps)))
-    keyframe_indices = list(range(0, total_frames, keyframe_interval))
-    num_keyframes = len(keyframe_indices)
-    total_attack_steps = steps_first + (num_keyframes - 1) * steps_warm
+    try:
+        # Extract audio track (if ffmpeg available)
+        audio_path = input_path + ".audio.aac"
+        has_audio = _has_ffmpeg() and _extract_audio(input_path, audio_path)
 
-    # Attack keyframes
-    noise_map: dict[int, torch.Tensor] = {}
-    prev_delta = None
-    global_step = 0
-
-    for ki, kf_idx in enumerate(keyframe_indices):
-        frame_224 = frame_to_tensor_224(frames[kf_idx])
-
-        is_first = ki == 0
-        n_steps = steps_first if is_first else steps_warm
-
-        def on_step(step, total, _ki=ki, _kf_idx=kf_idx):
-            nonlocal global_step
-            if progress_callback:
-                current = (global_step + step + 1)
-                progress_callback(
-                    "attacking", _ki + 1, num_keyframes,
-                    current, total_attack_steps,
-                )
-
-        adv_224 = ensemble_mi_di_ti_fgsm(
-            ensemble, frame_224, target_class,
-            epsilon=epsilon, steps=n_steps,
-            progress_callback=on_step,
-            init_delta=prev_delta,
-            compression_robust=compression_robust,
-        )
-
-        delta = adv_224 - frame_224
-        noise_map[kf_idx] = delta
-        prev_delta = delta
-        global_step += n_steps
-
-    # Interpolate noise for all frames (at 224x224)
-    if progress_callback:
-        progress_callback("interpolating", 0, total_frames, 0, 0)
-
-    all_noise_224: list[torch.Tensor] = []
-    for fi in range(total_frames):
-        if fi in noise_map:
-            all_noise_224.append(noise_map[fi])
-        else:
-            # Find surrounding keyframes
-            prev_kf = max(k for k in keyframe_indices if k <= fi)
-            candidates = [k for k in keyframe_indices if k > fi]
-            next_kf = candidates[0] if candidates else prev_kf
-
-            if prev_kf == next_kf:
-                all_noise_224.append(noise_map[prev_kf])
-            else:
-                t = (fi - prev_kf) / (next_kf - prev_kf)
-                interp = (1 - t) * noise_map[prev_kf] + t * noise_map[next_kf]
-                all_noise_224.append(interp)
-
-    # Apply noise to original frames (upscale each noise to full resolution)
-    if progress_callback:
-        progress_callback("applying", 0, total_frames, 0, 0)
-
-    output_frames = []
-    for i, frame in enumerate(frames):
+        # Extract frames
         if progress_callback:
-            progress_callback("applying", i + 1, total_frames, 0, 0)
+            progress_callback("extracting", 0, 0, 0, 0)
+        frames, fps, orig_w, orig_h = extract_frames_from_path(input_path)
+        total_frames = len(frames)
 
-        noise_full = F.interpolate(
-            all_noise_224[i], size=(orig_h, orig_w),
-            mode="bilinear", align_corners=False,
-        )
-        full_tensor = frame_to_tensor_full(frame)
-        adv_full = torch.clamp(full_tensor + noise_full, 0, 1)
-        output_frames.append(tensor_to_frame(adv_full))
+        # Determine keyframe indices
+        keyframe_interval = max(1, int(round(fps / keyframe_fps)))
+        keyframe_indices = list(range(0, total_frames, keyframe_interval))
+        num_keyframes = len(keyframe_indices)
+        total_attack_steps = steps_first + (num_keyframes - 1) * steps_warm
 
-    # Save video
-    if progress_callback:
-        progress_callback("saving", 0, 0, 0, 0)
+        # Attack keyframes
+        noise_map: dict[int, torch.Tensor] = {}
+        prev_delta = None
+        global_step = 0
 
-    tmp_out = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
-    tmp_out.close()
-    save_video(output_frames, fps, tmp_out.name)
+        for ki, kf_idx in enumerate(keyframe_indices):
+            frame_224 = frame_to_tensor_224(frames[kf_idx])
 
-    with open(tmp_out.name, "rb") as f:
-        result_bytes = f.read()
-    Path(tmp_out.name).unlink(missing_ok=True)
+            is_first = ki == 0
+            n_steps = steps_first if is_first else steps_warm
 
-    return result_bytes
+            def on_step(step, total, _ki=ki, _kf_idx=kf_idx):
+                nonlocal global_step
+                if progress_callback:
+                    current = (global_step + step + 1)
+                    progress_callback(
+                        "attacking", _ki + 1, num_keyframes,
+                        current, total_attack_steps,
+                    )
+
+            adv_224 = ensemble_mi_di_ti_fgsm(
+                ensemble, frame_224, target_class,
+                epsilon=epsilon, steps=n_steps,
+                progress_callback=on_step,
+                init_delta=prev_delta,
+                compression_robust=compression_robust,
+            )
+
+            delta = adv_224 - frame_224
+            noise_map[kf_idx] = delta
+            prev_delta = delta
+            global_step += n_steps
+
+        # Interpolate noise for all frames (at 224x224)
+        if progress_callback:
+            progress_callback("interpolating", 0, total_frames, 0, 0)
+
+        all_noise_224: list[torch.Tensor] = []
+        for fi in range(total_frames):
+            if fi in noise_map:
+                all_noise_224.append(noise_map[fi])
+            else:
+                # Find surrounding keyframes
+                prev_kf = max(k for k in keyframe_indices if k <= fi)
+                candidates = [k for k in keyframe_indices if k > fi]
+                next_kf = candidates[0] if candidates else prev_kf
+
+                if prev_kf == next_kf:
+                    all_noise_224.append(noise_map[prev_kf])
+                else:
+                    t = (fi - prev_kf) / (next_kf - prev_kf)
+                    interp = (1 - t) * noise_map[prev_kf] + t * noise_map[next_kf]
+                    all_noise_224.append(interp)
+
+        # Apply noise to original frames (upscale each noise to full resolution)
+        if progress_callback:
+            progress_callback("applying", 0, total_frames, 0, 0)
+
+        output_frames = []
+        for i, frame in enumerate(frames):
+            if progress_callback:
+                progress_callback("applying", i + 1, total_frames, 0, 0)
+
+            noise_full = F.interpolate(
+                all_noise_224[i], size=(orig_h, orig_w),
+                mode="bilinear", align_corners=False,
+            )
+            full_tensor = frame_to_tensor_full(frame)
+            adv_full = torch.clamp(full_tensor + noise_full, 0, 1)
+            output_frames.append(tensor_to_frame(adv_full))
+
+        # Save video (frames only)
+        if progress_callback:
+            progress_callback("saving", 0, 0, 0, 0)
+
+        tmp_video = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+        tmp_video.close()
+        save_video(output_frames, fps, tmp_video.name)
+
+        # Mux audio back in if available
+        if has_audio:
+            tmp_final = tempfile.NamedTemporaryFile(suffix=".mp4", delete=False)
+            tmp_final.close()
+            if _mux_audio(tmp_video.name, audio_path, tmp_final.name):
+                with open(tmp_final.name, "rb") as f:
+                    result_bytes = f.read()
+                Path(tmp_final.name).unlink(missing_ok=True)
+            else:
+                with open(tmp_video.name, "rb") as f:
+                    result_bytes = f.read()
+                Path(tmp_final.name).unlink(missing_ok=True)
+        else:
+            with open(tmp_video.name, "rb") as f:
+                result_bytes = f.read()
+
+        Path(tmp_video.name).unlink(missing_ok=True)
+        return result_bytes
+
+    finally:
+        # Cleanup temp files
+        Path(input_path).unlink(missing_ok=True)
+        Path(input_path + ".audio.aac").unlink(missing_ok=True)
