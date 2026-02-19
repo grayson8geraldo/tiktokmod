@@ -261,6 +261,37 @@ def _social_media_augment(x: torch.Tensor, jpeg_range: tuple = (60, 95),
     return x
 
 
+# ── Face-aware attack helpers ─────────────────────────────────────────────────
+
+def _crop_face_tensor(x: torch.Tensor, box: tuple,
+                      target_size: int = 160) -> torch.Tensor:
+    """Differentiable face crop + resize. box = (x1, y1, x2, y2) in pixels."""
+    x1, y1, x2, y2 = [int(c) for c in box]
+    h, w = x.shape[2], x.shape[3]
+    x1, y1 = max(0, x1), max(0, y1)
+    x2, y2 = min(w, x2), min(h, y2)
+    if x2 <= x1 or y2 <= y1:
+        return F.interpolate(x, size=(target_size, target_size),
+                             mode='bilinear', align_corners=False)
+    crop = x[:, :, y1:y2, x1:x2]
+    return F.interpolate(crop, size=(target_size, target_size),
+                         mode='bilinear', align_corners=False)
+
+
+def _make_epsilon_mask(shape: tuple, face_box: tuple, epsilon: float,
+                       face_epsilon: float, margin: float = 0.25) -> torch.Tensor:
+    """Per-pixel epsilon: face_epsilon in expanded face region, epsilon elsewhere."""
+    mask = torch.full(shape, epsilon)
+    x1, y1, x2, y2 = [int(c) for c in face_box]
+    bh, bw = y2 - y1, x2 - x1
+    mh, mw = int(bh * margin), int(bw * margin)
+    y1e, x1e = max(0, y1 - mh), max(0, x1 - mw)
+    y2e = min(shape[2], y2 + mh)
+    x2e = min(shape[3], x2 + mw)
+    mask[:, :, y1e:y2e, x1e:x2e] = face_epsilon
+    return mask
+
+
 def ensemble_mi_di_ti_fgsm(
     model_list: list[torch.nn.Module],
     img: torch.Tensor,
@@ -275,6 +306,9 @@ def ensemble_mi_di_ti_fgsm(
     init_delta: torch.Tensor | None = None,
     cancel_flag: list | None = None,
     compression_robust: bool = False,
+    face_model: torch.nn.Module | None = None,
+    face_box: tuple | None = None,
+    face_weight: float = 1.0,
 ) -> torch.Tensor:
     """
     Ensemble MI-DI-TI-FGSM (targeted).
@@ -290,6 +324,11 @@ def ensemble_mi_di_ti_fgsm(
       - Random Gaussian blur and resize augmentation
       - Forces noise into low-frequency bands that survive social media recompression
       This makes the attack effective even after TikTok re-encodes the video/image.
+
+    When face_model + face_box are provided (celebrity mode):
+      - Adds face embedding loss to make faces unrecognizable
+      - Uses per-pixel epsilon: stronger noise (2.5x) in face region
+      - Defeats face detection + recognition models (RetinaFace, ArcFace)
 
     If init_delta is provided, start from img+init_delta (warm-start).
     Pass cancel_flag=[False] — set cancel_flag[0]=True to abort early.
@@ -309,6 +348,16 @@ def ensemble_mi_di_ti_fgsm(
     # For compression-robust mode: low-frequency noise enforcement kernel
     if compression_robust:
         lf_kernel = _gaussian_kernel(7, sigma=1.5).to(dev)
+
+    # Face-aware setup: per-pixel epsilon + original face embedding
+    orig_face_emb = None
+    eps_mask = None
+    if face_model is not None and face_box is not None:
+        face_epsilon = min(epsilon * 2.5, 0.20)
+        eps_mask = _make_epsilon_mask(img_d.shape, face_box, epsilon, face_epsilon).to(dev)
+        with torch.no_grad():
+            orig_crop = _crop_face_tensor(img_d, face_box, 160)
+            orig_face_emb = face_model(orig_crop * 2 - 1).detach()
 
     for step in range(steps):
         if cancel_flag and cancel_flag[0]:
@@ -333,6 +382,15 @@ def ensemble_mi_di_ti_fgsm(
             total_grad += adv.grad.data.clone()
             adv.grad.data.zero_()
 
+        # Face embedding loss: push face embedding away from original
+        if face_model is not None and orig_face_emb is not None:
+            face_crop = _crop_face_tensor(adv, face_box, 160)
+            adv_emb = face_model(face_crop * 2 - 1)
+            f_loss = F.cosine_similarity(adv_emb, orig_face_emb, dim=1).mean()
+            f_loss.backward()
+            total_grad += adv.grad.data.clone() * face_weight * len(model_list)
+            adv.grad.data.zero_()
+
         total_grad /= len(model_list)
 
         # TI: smooth gradient
@@ -345,11 +403,16 @@ def ensemble_mi_di_ti_fgsm(
 
         with torch.no_grad():
             adv = adv - alpha * grad_momentum.sign()
-            delta = torch.clamp(adv - img_d, -epsilon, epsilon)
+            delta = adv - img_d
 
             # Compression-robust: force noise into low frequencies
             if compression_robust:
                 delta = F.conv2d(delta, lf_kernel, padding=3, groups=3)
+
+            # Project into epsilon ball (per-pixel when face-aware)
+            if eps_mask is not None:
+                delta = torch.clamp(delta, -eps_mask, eps_mask)
+            else:
                 delta = torch.clamp(delta, -epsilon, epsilon)
 
             adv = torch.clamp(img_d + delta, 0, 1)

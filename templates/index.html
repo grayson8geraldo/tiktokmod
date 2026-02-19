@@ -627,6 +627,13 @@
           </label>
           <span style="font-size:0.75em;color:var(--text-dim);">JPEG-симуляция в цикле атаки. Медленнее, но шум выживает после пережатия (TikTok, Instagram).</span>
         </div>
+        <div class="field" id="celebrity-img-wrap" style="display:none;align-items:center;gap:10px;padding-top:20px;">
+          <label style="margin:0;white-space:nowrap;cursor:pointer;" for="celebrity-img">
+            <input type="checkbox" id="celebrity-img" style="width:auto;margin-right:6px;">
+            Режим знаменитости
+          </label>
+          <span style="font-size:0.75em;color:var(--text-dim);">Атакует face recognition: лицо станет неузнаваемым для модерации. Сильнее шум на лице.</span>
+        </div>
         <div class="method-hint" id="method-hint">
           TikTok Ensemble: атака по 5 моделям одновременно (ResNet-50 + EfficientNet-V2 +
           Swin-T + ViT-B/16 + ConvNeXt). Покрывает CNN и Transformer архитектуры.
@@ -681,6 +688,13 @@
           Устойчивость к сжатию (рекомендуется)
         </label>
         <span style="font-size:0.75em;color:var(--text-dim);">Шум выживает после пережатия TikTok/H.264. Медленнее в ~2x.</span>
+      </div>
+      <div id="celebrity-video-wrap" style="display:none;margin-top:10px;align-items:center;gap:10px;">
+        <label style="margin:0;white-space:nowrap;cursor:pointer;font-size:0.85em;" for="celebrity-video">
+          <input type="checkbox" id="celebrity-video" style="width:auto;margin-right:6px;">
+          Режим знаменитости
+        </label>
+        <span style="font-size:0.75em;color:var(--text-dim);">Атакует face recognition + classification. Лицо станет неузнаваемым для авто-модерации.</span>
       </div>
     </div>
   </div>
@@ -1152,6 +1166,7 @@ runBtn.addEventListener('click', async () => {
     formData.append('epsilon', document.getElementById('video-epsilon').value);
     formData.append('steps', document.getElementById('video-steps').value);
     formData.append('robust', document.getElementById('robust-video').checked ? 'true' : 'false');
+    formData.append('celebrity', document.getElementById('celebrity-video').checked ? 'true' : 'false');
   } else {
     url = '/transform';
     formData.append('source_image', sourceFile);
@@ -1159,6 +1174,7 @@ runBtn.addEventListener('click', async () => {
     formData.append('epsilon', document.getElementById('epsilon').value);
     formData.append('steps', document.getElementById('steps').value);
     formData.append('robust', document.getElementById('robust-img').checked ? 'true' : 'false');
+    formData.append('celebrity', document.getElementById('celebrity-img').checked ? 'true' : 'false');
   }
 
   try {
@@ -1191,6 +1207,11 @@ runBtn.addEventListener('click', async () => {
     const isGpu = dev !== 'cpu';
     const label = isGpu ? dev.toUpperCase() + ' (GPU)' : 'CPU (GPU не обнаружен)';
     badge.innerHTML = `<span class="${isGpu ? 'gpu' : 'cpu'}">${label}</span>`;
+    // Show celebrity mode checkboxes if face support available
+    if (data.face_support) {
+      document.getElementById('celebrity-img-wrap').style.display = 'flex';
+      document.getElementById('celebrity-video-wrap').style.display = 'flex';
+    }
   } catch(e) {}
 })();
 </script>

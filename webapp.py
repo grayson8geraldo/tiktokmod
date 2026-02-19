@@ -123,6 +123,35 @@ def _load_labels():
 print("[*] Loading ImageNet labels …")
 LABELS = _load_labels()
 
+# ── Face detection & recognition for celebrity mode ──────────────────────────
+
+try:
+    from facenet_pytorch import MTCNN, InceptionResnetV1
+    print("[*] Loading face detection & recognition …")
+    _face_mtcnn = MTCNN(keep_all=False, device=DEVICE)
+    FACE_MODEL = InceptionResnetV1(pretrained='vggface2').eval().to(DEVICE)
+    FACE_SUPPORT = True
+    print("[*] Face models loaded (celebrity mode available)")
+except ImportError:
+    _face_mtcnn = None
+    FACE_MODEL = None
+    FACE_SUPPORT = False
+    print("[*] Face models unavailable — install facenet-pytorch for celebrity mode")
+
+
+def detect_face_box(img_tensor_224: torch.Tensor):
+    """Detect face in 1×3×224×224 tensor [0,1]. Returns (x1,y1,x2,y2) or None."""
+    if _face_mtcnn is None:
+        return None
+    with torch.no_grad():
+        img_np = (img_tensor_224.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+        pil_img = Image.fromarray(img_np)
+        boxes, probs = _face_mtcnn.detect(pil_img)
+        if boxes is not None and len(boxes) > 0 and probs[0] > 0.9:
+            return tuple(boxes[0].tolist())
+    return None
+
+
 print(f"[OK] {len(ENSEMBLE)} models on {DEVICE} — open http://localhost:5000")
 
 # ── Task tracking for async processing ───────────────────────────────────────
@@ -234,7 +263,7 @@ def index():
 @app.route("/device")
 def device_info():
     """Return current compute device info."""
-    return jsonify({"device": str(DEVICE)})
+    return jsonify({"device": str(DEVICE), "face_support": FACE_SUPPORT})
 
 
 @app.route("/transform", methods=["POST"])
@@ -260,6 +289,7 @@ def transform():
     epsilon = float(request.form.get("epsilon", "0.06"))
     steps = int(request.form.get("steps", "120"))
     robust = request.form.get("robust", "false") == "true"
+    celebrity = request.form.get("celebrity", "false") == "true"
 
     cancel_flag = [False]
     task_id = str(uuid.uuid4())
@@ -308,12 +338,17 @@ def transform():
                     epsilon, steps=steps, progress_callback=on_progress,
                 )
             else:
+                face_box = None
+                if celebrity and FACE_SUPPORT:
+                    face_box = detect_face_box(source_224)
                 adv_224 = ensemble_mi_di_ti_fgsm(
                     ENSEMBLE, source_224, target_class_idx,
                     epsilon=epsilon, steps=steps,
                     progress_callback=on_progress,
                     cancel_flag=cancel_flag,
                     compression_robust=robust,
+                    face_model=FACE_MODEL if face_box else None,
+                    face_box=face_box,
                 )
 
             if cancel_flag[0]:
@@ -497,6 +532,7 @@ def transform_video():
     epsilon = float(request.form.get("epsilon", "0.06"))
     steps = int(request.form.get("steps", "120"))
     robust = request.form.get("robust", "true") == "true"  # default ON for video
+    celebrity = request.form.get("celebrity", "false") == "true"
 
     cancel_flag = [False]
     task_id = str(uuid.uuid4())
@@ -537,6 +573,9 @@ def transform_video():
                 elif phase in ("extracting", "saving"):
                     task["extra"] = ""
 
+            _fm = FACE_MODEL if (celebrity and FACE_SUPPORT) else None
+            _fd = detect_face_box if (celebrity and FACE_SUPPORT) else None
+
             if mode == "quality":
                 result_bytes = attack_video_warmstart(
                     ENSEMBLE, video_bytes, target_class_idx,
@@ -546,6 +585,8 @@ def transform_video():
                     keyframe_fps=2.0,
                     progress_callback=on_progress,
                     compression_robust=robust,
+                    face_model=_fm,
+                    face_detector=_fd,
                 )
             else:
                 result_bytes = attack_video_fast(
@@ -554,6 +595,8 @@ def transform_video():
                     steps=steps,
                     progress_callback=on_progress,
                     compression_robust=robust,
+                    face_model=_fm,
+                    face_detector=_fd,
                 )
 
             elapsed = round(time.time() - task["created"], 1)

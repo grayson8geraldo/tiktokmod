@@ -153,10 +153,15 @@ def attack_video_fast(
     steps: int = 120,
     progress_callback=None,
     compression_robust: bool = True,
+    face_model=None,
+    face_detector=None,
 ) -> bytes:
     """
     Fast video attack: compute noise on one representative frame,
     apply the same noise (upscaled) to all frames.
+
+    face_model: InceptionResnetV1 for face embedding attack (celebrity mode)
+    face_detector: callable(tensor_224) -> (x1,y1,x2,y2) or None
 
     progress_callback(phase, frame_idx, total_frames, step, total_steps)
     """
@@ -182,6 +187,11 @@ def attack_video_fast(
         mid_idx = total_frames // 2
         mid_224 = frame_to_tensor_224(frames[mid_idx])
 
+        # Detect face for celebrity mode
+        face_box = None
+        if face_model is not None and face_detector is not None:
+            face_box = face_detector(mid_224)
+
         # Attack the representative frame
         def on_step(step, total):
             if progress_callback:
@@ -192,6 +202,8 @@ def attack_video_fast(
             epsilon=epsilon, steps=steps,
             progress_callback=on_step,
             compression_robust=compression_robust,
+            face_model=face_model if face_box else None,
+            face_box=face_box,
         )
 
         # Compute noise at 224x224, upscale to full resolution
@@ -260,6 +272,8 @@ def attack_video_warmstart(
     keyframe_fps: float = 2.0,
     progress_callback=None,
     compression_robust: bool = True,
+    face_model=None,
+    face_detector=None,
 ) -> bytes:
     """
     Quality video attack with warm-start:
@@ -267,6 +281,9 @@ def attack_video_warmstart(
     2) First keyframe gets full steps, rest use warm-start from previous noise
     3) Interpolate noise between keyframes
     4) Apply upscaled noise to original frames
+
+    face_model: InceptionResnetV1 for face embedding attack (celebrity mode)
+    face_detector: callable(tensor_224) -> (x1,y1,x2,y2) or None
 
     progress_callback(phase, frame_idx, total_frames, step, total_steps)
     """
@@ -302,6 +319,11 @@ def attack_video_warmstart(
         for ki, kf_idx in enumerate(keyframe_indices):
             frame_224 = frame_to_tensor_224(frames[kf_idx])
 
+            # Detect face per keyframe (celebrity mode)
+            face_box = None
+            if face_model is not None and face_detector is not None:
+                face_box = face_detector(frame_224)
+
             is_first = ki == 0
             n_steps = steps_first if is_first else steps_warm
 
@@ -320,6 +342,8 @@ def attack_video_warmstart(
                 progress_callback=on_step,
                 init_delta=prev_delta,
                 compression_robust=compression_robust,
+                face_model=face_model if face_box else None,
+                face_box=face_box,
             )
 
             delta = adv_224 - frame_224
