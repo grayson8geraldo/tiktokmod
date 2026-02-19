@@ -143,6 +143,60 @@ def tensor_to_frame(tensor: torch.Tensor) -> np.ndarray:
     return (img_np * 255).astype(np.uint8)
 
 
+# ── Temporal flickering ───────────────────────────────────────────────────────
+
+def _apply_temporal_flicker(
+    all_noise: list[torch.Tensor],
+    num_frames: int,
+    intensity: float = 0.3,
+    temporal_smoothness: float = 0.7,
+    epsilon: float = 0.06,
+) -> list[torch.Tensor]:
+    """
+    Add temporally correlated random variation to per-frame noise.
+
+    Uses a random walk with momentum so the flicker looks natural (camera-sensor
+    noise) rather than like random static, which would be perceptible.
+
+    Args:
+        all_noise: list of 1x3xHxW noise tensors (one per frame)
+        num_frames: number of output frames (must == len(all_noise))
+        intensity: fraction of epsilon used for flicker amplitude (0 = off)
+        temporal_smoothness: momentum factor (0 = fully random, 1 = static)
+        epsilon: global perturbation budget
+
+    Returns:
+        list of 1x3xHxW flickered noise tensors, re-projected into [-eps, eps]
+    """
+    if intensity <= 0 or num_frames <= 1:
+        return all_noise
+
+    flicker_eps = epsilon * intensity
+    result = []
+
+    # Random walk state — starts at zero, drifts with momentum
+    prev_variation = torch.zeros_like(all_noise[0])
+
+    for t in range(num_frames):
+        base = all_noise[t]
+
+        # New random direction (normalised to unit mean-abs)
+        new_dir = torch.randn_like(base)
+        new_dir = new_dir / (new_dir.abs().mean() + 1e-8)
+
+        # Blend with previous frame's variation (temporal smoothness)
+        variation = temporal_smoothness * prev_variation + (1 - temporal_smoothness) * new_dir
+        variation = variation * flicker_eps
+
+        # Combine with base noise and re-project into epsilon ball
+        frame_noise = torch.clamp(base + variation, -epsilon, epsilon)
+
+        result.append(frame_noise)
+        prev_variation = variation / (flicker_eps + 1e-8)
+
+    return result
+
+
 # ── Fast mode ────────────────────────────────────────────────────────────────
 
 def attack_video_fast(
@@ -156,6 +210,7 @@ def attack_video_fast(
     face_model=None,
     face_detector=None,
     text_detector=None,
+    flicker_intensity: float = 0.0,
 ) -> bytes:
     """
     Fast video attack: compute noise on one representative frame,
@@ -164,6 +219,7 @@ def attack_video_fast(
     face_model: InceptionResnetV1 for face embedding attack (celebrity mode)
     face_detector: callable(tensor_224) -> (x1,y1,x2,y2) or None
     text_detector: callable(frame_rgb_numpy) -> list[(x1,y1,x2,y2)] or None
+    flicker_intensity: 0.0-1.0, temporal noise variation between frames
 
     progress_callback(phase, frame_idx, total_frames, step, total_steps)
     """
@@ -214,14 +270,18 @@ def attack_video_fast(
             text_boxes=text_boxes,
         )
 
-        # Compute noise at 224x224, upscale to full resolution
+        # Compute noise at 224x224
         noise_224 = adv_224 - mid_224
-        noise_full = F.interpolate(
-            noise_224, size=(orig_h, orig_w),
-            mode="bilinear", align_corners=False,
-        )
 
-        # Apply same noise to all frames
+        # Apply temporal flickering (per-frame variation at 224 level)
+        all_noise_224 = [noise_224] * total_frames
+        if flicker_intensity > 0:
+            all_noise_224 = _apply_temporal_flicker(
+                all_noise_224, total_frames,
+                intensity=flicker_intensity, epsilon=epsilon,
+            )
+
+        # Apply noise to all frames (upscale each to full resolution)
         if progress_callback:
             progress_callback("applying", 0, total_frames, 0, 0)
 
@@ -229,6 +289,10 @@ def attack_video_fast(
         for i, frame in enumerate(frames):
             if progress_callback:
                 progress_callback("applying", i + 1, total_frames, 0, 0)
+            noise_full = F.interpolate(
+                all_noise_224[i], size=(orig_h, orig_w),
+                mode="bilinear", align_corners=False,
+            )
             full_tensor = frame_to_tensor_full(frame)
             adv_full = torch.clamp(full_tensor + noise_full, 0, 1)
             output_frames.append(tensor_to_frame(adv_full))
@@ -283,17 +347,20 @@ def attack_video_warmstart(
     face_model=None,
     face_detector=None,
     text_detector=None,
+    flicker_intensity: float = 0.0,
 ) -> bytes:
     """
     Quality video attack with warm-start:
     1) Attack keyframes (every 1/keyframe_fps seconds)
     2) First keyframe gets full steps, rest use warm-start from previous noise
     3) Interpolate noise between keyframes
-    4) Apply upscaled noise to original frames
+    4) Apply temporal flickering (per-frame variation)
+    5) Apply upscaled noise to original frames
 
     face_model: InceptionResnetV1 for face embedding attack (celebrity mode)
     face_detector: callable(tensor_224) -> (x1,y1,x2,y2) or None
     text_detector: callable(frame_rgb_numpy) -> list[(x1,y1,x2,y2)] or None
+    flicker_intensity: 0.0-1.0, temporal noise variation between frames
 
     progress_callback(phase, frame_idx, total_frames, step, total_steps)
     """
@@ -387,6 +454,13 @@ def attack_video_warmstart(
                     t = (fi - prev_kf) / (next_kf - prev_kf)
                     interp = (1 - t) * noise_map[prev_kf] + t * noise_map[next_kf]
                     all_noise_224.append(interp)
+
+        # Apply temporal flickering on top of interpolated noise
+        if flicker_intensity > 0:
+            all_noise_224 = _apply_temporal_flicker(
+                all_noise_224, total_frames,
+                intensity=flicker_intensity, epsilon=epsilon,
+            )
 
         # Apply noise to original frames (upscale each noise to full resolution)
         if progress_callback:

@@ -582,6 +582,8 @@ def transform_video():
     celebrity = request.form.get("celebrity", "false") == "true"
     ocr_protect = request.form.get("ocr_protect", "false") == "true"
 
+    flicker = float(request.form.get("flicker", "0"))
+
     cancel_flag = [False]
     task_id = str(uuid.uuid4())
     with _tasks_lock:
@@ -637,6 +639,7 @@ def transform_video():
                     face_model=_fm,
                     face_detector=_fd,
                     text_detector=_td,
+                    flicker_intensity=flicker,
                 )
             else:
                 result_bytes = attack_video_fast(
@@ -648,6 +651,7 @@ def transform_video():
                     face_model=_fm,
                     face_detector=_fd,
                     text_detector=_td,
+                    flicker_intensity=flicker,
                 )
 
             elapsed = round(time.time() - task["created"], 1)
@@ -661,6 +665,7 @@ def transform_video():
                 "mode": mode,
                 "epsilon": epsilon,
                 "steps": steps,
+                "flicker": flicker,
                 "video_size_kb": round(len(result_bytes) / 1024, 1),
                 "elapsed_sec": elapsed,
                 "device": str(DEVICE),

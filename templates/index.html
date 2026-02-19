@@ -689,6 +689,18 @@
           <input type="number" id="video-steps" value="200" min="10" max="500">
         </div>
       </div>
+      <div style="margin-top:16px;">
+        <label style="font-size:0.85em;display:flex;align-items:center;gap:10px;margin-bottom:6px;">
+          <span style="white-space:nowrap;font-weight:600;">Мерцание (flicker)</span>
+          <input type="range" id="flicker-slider" min="0" max="0.5" step="0.05" value="0"
+                 style="flex:1;accent-color:var(--accent);">
+          <span id="flicker-value" style="min-width:32px;text-align:right;color:var(--accent);font-weight:600;">0</span>
+        </label>
+        <span style="font-size:0.75em;color:var(--text-dim);line-height:1.4;display:block;">
+          Покадровое мерцание шума. Сбивает temporal-классификаторы (Video Swin, SlowFast).
+          0 = выкл, 0.15 = лёгкое, 0.3 = умеренное, 0.5 = максимум. Визуально незаметно при &#8804; 0.3.
+        </span>
+      </div>
       <div style="margin-top:12px;display:flex;align-items:center;gap:10px;">
         <label style="margin:0;white-space:nowrap;cursor:pointer;font-size:0.85em;" for="robust-video">
           <input type="checkbox" id="robust-video" checked style="width:auto;margin-right:6px;">
@@ -804,6 +816,7 @@
       <div><div class="stat-value" id="vstat-mode"></div><div class="stat-label">Режим</div></div>
       <div><div class="stat-value" id="vstat-epsilon"></div><div class="stat-label">Epsilon</div></div>
       <div><div class="stat-value" id="vstat-steps"></div><div class="stat-label">Шаги</div></div>
+      <div><div class="stat-value" id="vstat-flicker"></div><div class="stat-label">Мерцание</div></div>
       <div><div class="stat-value" id="vstat-size"></div><div class="stat-label">Размер</div></div>
       <div><div class="stat-value" id="vstat-time"></div><div class="stat-label">Время</div></div>
     </div>
@@ -887,6 +900,13 @@ document.querySelectorAll('.video-mode-btn').forEach(btn => {
     btn.classList.add('selected');
     selectedVideoMode = btn.dataset.mode;
   });
+});
+
+// ── Flicker slider ──
+const flickerSlider = document.getElementById('flicker-slider');
+const flickerValue = document.getElementById('flicker-value');
+flickerSlider.addEventListener('input', () => {
+  flickerValue.textContent = flickerSlider.value;
 });
 
 // ── Drag-and-drop + upload ──
@@ -1071,6 +1091,7 @@ function showVideoResults(data) {
   document.getElementById('vstat-mode').textContent = modeLabels[data.mode] || data.mode;
   document.getElementById('vstat-epsilon').textContent = data.epsilon;
   document.getElementById('vstat-steps').textContent = data.steps;
+  document.getElementById('vstat-flicker').textContent = data.flicker > 0 ? data.flicker : 'выкл';
   document.getElementById('vstat-size').textContent = data.video_size_kb + ' КБ';
   document.getElementById('vstat-time').textContent = formatTime(data.elapsed_sec);
 
@@ -1182,6 +1203,7 @@ runBtn.addEventListener('click', async () => {
     formData.append('robust', document.getElementById('robust-video').checked ? 'true' : 'false');
     formData.append('celebrity', document.getElementById('celebrity-video').checked ? 'true' : 'false');
     formData.append('ocr_protect', document.getElementById('ocr-video').checked ? 'true' : 'false');
+    formData.append('flicker', document.getElementById('flicker-slider').value);
   } else {
     url = '/transform';
     formData.append('source_image', sourceFile);
