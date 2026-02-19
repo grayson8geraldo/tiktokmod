@@ -53,6 +53,23 @@ def get_device() -> torch.device:
 
 DEVICE = get_device()
 
+
+# ── MPS compatibility: adaptive_avg_pool2d doesn't support all sizes ─────────
+# PyTorch issue #96056 — fallback to CPU for the pool op (tensor is tiny, no perf hit)
+
+if DEVICE.type == "mps":
+    _orig_adaptive_avg_pool2d = F.adaptive_avg_pool2d
+
+    def _mps_safe_adaptive_avg_pool2d(input, output_size):
+        if input.device.type == "mps":
+            return _orig_adaptive_avg_pool2d(
+                input.cpu(), output_size,
+            ).to("mps")
+        return _orig_adaptive_avg_pool2d(input, output_size)
+
+    F.adaptive_avg_pool2d = _mps_safe_adaptive_avg_pool2d
+
+
 # ── A small subset of ImageNet labels (full list has 1000 entries) ────────────
 # We'll load them dynamically if possible; otherwise fall back to a minimal map.
 LABELS_URL = (
