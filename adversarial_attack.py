@@ -278,18 +278,19 @@ def _crop_face_tensor(x: torch.Tensor, box: tuple,
                          mode='bilinear', align_corners=False)
 
 
-def _make_epsilon_mask(shape: tuple, face_box: tuple, epsilon: float,
-                       face_epsilon: float, margin: float = 0.25) -> torch.Tensor:
-    """Per-pixel epsilon: face_epsilon in expanded face region, epsilon elsewhere."""
-    mask = torch.full(shape, epsilon)
-    x1, y1, x2, y2 = [int(c) for c in face_box]
-    bh, bw = y2 - y1, x2 - x1
+def _apply_region_epsilon(mask: torch.Tensor, box: tuple,
+                          eps: float, margin: float = 0.2) -> None:
+    """Set epsilon in expanded box region (only increases, never decreases)."""
+    x1, y1, x2, y2 = [int(c) for c in box]
+    bh, bw = max(1, y2 - y1), max(1, x2 - x1)
     mh, mw = int(bh * margin), int(bw * margin)
-    y1e, x1e = max(0, y1 - mh), max(0, x1 - mw)
-    y2e = min(shape[2], y2 + mh)
-    x2e = min(shape[3], x2 + mw)
-    mask[:, :, y1e:y2e, x1e:x2e] = face_epsilon
-    return mask
+    y1e = max(0, y1 - mh)
+    x1e = max(0, x1 - mw)
+    y2e = min(mask.shape[2], y2 + mh)
+    x2e = min(mask.shape[3], x2 + mw)
+    mask[:, :, y1e:y2e, x1e:x2e] = torch.clamp(
+        mask[:, :, y1e:y2e, x1e:x2e], min=eps,
+    )
 
 
 def ensemble_mi_di_ti_fgsm(
@@ -309,6 +310,7 @@ def ensemble_mi_di_ti_fgsm(
     face_model: torch.nn.Module | None = None,
     face_box: tuple | None = None,
     face_weight: float = 1.0,
+    text_boxes: list[tuple] | None = None,
 ) -> torch.Tensor:
     """
     Ensemble MI-DI-TI-FGSM (targeted).
@@ -328,7 +330,10 @@ def ensemble_mi_di_ti_fgsm(
     When face_model + face_box are provided (celebrity mode):
       - Adds face embedding loss to make faces unrecognizable
       - Uses per-pixel epsilon: stronger noise (2.5x) in face region
-      - Defeats face detection + recognition models (RetinaFace, ArcFace)
+
+    When text_boxes are provided (OCR protection):
+      - Uses per-pixel epsilon: stronger noise (3x) in text regions
+      - Breaks OCR readability of numbers/text (bank balances, payouts)
 
     If init_delta is provided, start from img+init_delta (warm-start).
     Pass cancel_flag=[False] — set cancel_flag[0]=True to abort early.
@@ -349,12 +354,23 @@ def ensemble_mi_di_ti_fgsm(
     if compression_robust:
         lf_kernel = _gaussian_kernel(7, sigma=1.5).to(dev)
 
-    # Face-aware setup: per-pixel epsilon + original face embedding
-    orig_face_emb = None
+    # Per-pixel epsilon mask (face + text regions get stronger noise)
     eps_mask = None
+    has_face = face_box is not None
+    has_text = text_boxes is not None and len(text_boxes) > 0
+    if has_face or has_text:
+        eps_mask = torch.full(img_d.shape, epsilon, device=dev)
+        if has_face:
+            face_eps = min(epsilon * 2.5, 0.20)
+            _apply_region_epsilon(eps_mask, face_box, face_eps, margin=0.25)
+        if has_text:
+            text_eps = min(epsilon * 3.0, 0.25)
+            for tbox in text_boxes:
+                _apply_region_epsilon(eps_mask, tbox, text_eps, margin=0.15)
+
+    # Face embedding attack setup
+    orig_face_emb = None
     if face_model is not None and face_box is not None:
-        face_epsilon = min(epsilon * 2.5, 0.20)
-        eps_mask = _make_epsilon_mask(img_d.shape, face_box, epsilon, face_epsilon).to(dev)
         with torch.no_grad():
             orig_crop = _crop_face_tensor(img_d, face_box, 160)
             orig_face_emb = face_model(orig_crop * 2 - 1).detach()

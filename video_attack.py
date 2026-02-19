@@ -155,6 +155,7 @@ def attack_video_fast(
     compression_robust: bool = True,
     face_model=None,
     face_detector=None,
+    text_detector=None,
 ) -> bytes:
     """
     Fast video attack: compute noise on one representative frame,
@@ -162,6 +163,7 @@ def attack_video_fast(
 
     face_model: InceptionResnetV1 for face embedding attack (celebrity mode)
     face_detector: callable(tensor_224) -> (x1,y1,x2,y2) or None
+    text_detector: callable(frame_rgb_numpy) -> list[(x1,y1,x2,y2)] or None
 
     progress_callback(phase, frame_idx, total_frames, step, total_steps)
     """
@@ -192,6 +194,11 @@ def attack_video_fast(
         if face_model is not None and face_detector is not None:
             face_box = face_detector(mid_224)
 
+        # Detect text regions for OCR protection (full-res → 224 coords)
+        text_boxes = None
+        if text_detector is not None:
+            text_boxes = text_detector(frames[mid_idx])
+
         # Attack the representative frame
         def on_step(step, total):
             if progress_callback:
@@ -204,6 +211,7 @@ def attack_video_fast(
             compression_robust=compression_robust,
             face_model=face_model if face_box else None,
             face_box=face_box,
+            text_boxes=text_boxes,
         )
 
         # Compute noise at 224x224, upscale to full resolution
@@ -274,6 +282,7 @@ def attack_video_warmstart(
     compression_robust: bool = True,
     face_model=None,
     face_detector=None,
+    text_detector=None,
 ) -> bytes:
     """
     Quality video attack with warm-start:
@@ -284,6 +293,7 @@ def attack_video_warmstart(
 
     face_model: InceptionResnetV1 for face embedding attack (celebrity mode)
     face_detector: callable(tensor_224) -> (x1,y1,x2,y2) or None
+    text_detector: callable(frame_rgb_numpy) -> list[(x1,y1,x2,y2)] or None
 
     progress_callback(phase, frame_idx, total_frames, step, total_steps)
     """
@@ -310,6 +320,11 @@ def attack_video_warmstart(
         keyframe_indices = list(range(0, total_frames, keyframe_interval))
         num_keyframes = len(keyframe_indices)
         total_attack_steps = steps_first + (num_keyframes - 1) * steps_warm
+
+        # Detect text once (overlays are usually static across frames)
+        text_boxes = None
+        if text_detector is not None:
+            text_boxes = text_detector(frames[0])
 
         # Attack keyframes
         noise_map: dict[int, torch.Tensor] = {}
@@ -344,6 +359,7 @@ def attack_video_warmstart(
                 compression_robust=compression_robust,
                 face_model=face_model if face_box else None,
                 face_box=face_box,
+                text_boxes=text_boxes,
             )
 
             delta = adv_224 - frame_224

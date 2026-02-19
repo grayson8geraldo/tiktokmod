@@ -152,6 +152,43 @@ def detect_face_box(img_tensor_224: torch.Tensor):
     return None
 
 
+# ── OCR text detection for text/number protection ────────────────────────────
+
+try:
+    import easyocr
+    print("[*] Loading OCR text detection …")
+    _ocr_reader = easyocr.Reader(
+        ['en', 'ru'], gpu=(str(DEVICE) != 'cpu'), verbose=False,
+    )
+    OCR_SUPPORT = True
+    print("[*] OCR models loaded (text protection available)")
+except ImportError:
+    _ocr_reader = None
+    OCR_SUPPORT = False
+    print("[*] OCR unavailable — install easyocr for text/number protection")
+
+
+def detect_text_boxes_224(frame_rgb: np.ndarray) -> list[tuple] | None:
+    """Detect text regions in full-res frame, return boxes scaled to 224×224."""
+    if _ocr_reader is None:
+        return None
+    h, w = frame_rgb.shape[:2]
+    results = _ocr_reader.readtext(frame_rgb)
+    if not results:
+        return None
+    boxes = []
+    sx, sy = 224.0 / w, 224.0 / h
+    for (bbox, text, conf) in results:
+        if conf < 0.3:
+            continue
+        xs = [p[0] for p in bbox]
+        ys = [p[1] for p in bbox]
+        x1, y1 = min(xs) * sx, min(ys) * sy
+        x2, y2 = max(xs) * sx, max(ys) * sy
+        boxes.append((x1, y1, x2, y2))
+    return boxes if boxes else None
+
+
 print(f"[OK] {len(ENSEMBLE)} models on {DEVICE} — open http://localhost:5000")
 
 # ── Task tracking for async processing ───────────────────────────────────────
@@ -263,7 +300,11 @@ def index():
 @app.route("/device")
 def device_info():
     """Return current compute device info."""
-    return jsonify({"device": str(DEVICE), "face_support": FACE_SUPPORT})
+    return jsonify({
+        "device": str(DEVICE),
+        "face_support": FACE_SUPPORT,
+        "ocr_support": OCR_SUPPORT,
+    })
 
 
 @app.route("/transform", methods=["POST"])
@@ -290,6 +331,7 @@ def transform():
     steps = int(request.form.get("steps", "120"))
     robust = request.form.get("robust", "false") == "true"
     celebrity = request.form.get("celebrity", "false") == "true"
+    ocr_protect = request.form.get("ocr_protect", "false") == "true"
 
     cancel_flag = [False]
     task_id = str(uuid.uuid4())
@@ -341,6 +383,10 @@ def transform():
                 face_box = None
                 if celebrity and FACE_SUPPORT:
                     face_box = detect_face_box(source_224)
+                text_boxes = None
+                if ocr_protect and OCR_SUPPORT:
+                    orig_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                    text_boxes = detect_text_boxes_224(np.array(orig_img))
                 adv_224 = ensemble_mi_di_ti_fgsm(
                     ENSEMBLE, source_224, target_class_idx,
                     epsilon=epsilon, steps=steps,
@@ -349,6 +395,7 @@ def transform():
                     compression_robust=robust,
                     face_model=FACE_MODEL if face_box else None,
                     face_box=face_box,
+                    text_boxes=text_boxes,
                 )
 
             if cancel_flag[0]:
@@ -533,6 +580,7 @@ def transform_video():
     steps = int(request.form.get("steps", "120"))
     robust = request.form.get("robust", "true") == "true"  # default ON for video
     celebrity = request.form.get("celebrity", "false") == "true"
+    ocr_protect = request.form.get("ocr_protect", "false") == "true"
 
     cancel_flag = [False]
     task_id = str(uuid.uuid4())
@@ -575,6 +623,7 @@ def transform_video():
 
             _fm = FACE_MODEL if (celebrity and FACE_SUPPORT) else None
             _fd = detect_face_box if (celebrity and FACE_SUPPORT) else None
+            _td = detect_text_boxes_224 if (ocr_protect and OCR_SUPPORT) else None
 
             if mode == "quality":
                 result_bytes = attack_video_warmstart(
@@ -587,6 +636,7 @@ def transform_video():
                     compression_robust=robust,
                     face_model=_fm,
                     face_detector=_fd,
+                    text_detector=_td,
                 )
             else:
                 result_bytes = attack_video_fast(
@@ -597,6 +647,7 @@ def transform_video():
                     compression_robust=robust,
                     face_model=_fm,
                     face_detector=_fd,
+                    text_detector=_td,
                 )
 
             elapsed = round(time.time() - task["created"], 1)
