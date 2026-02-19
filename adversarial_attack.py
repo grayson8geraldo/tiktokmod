@@ -166,13 +166,17 @@ def _input_diversity(x: torch.Tensor, prob: float = 0.7,
     """DI-FGSM: random resize + pad to improve transfer (Xie et al., 2019)."""
     if torch.rand(1).item() > prob:
         return x
-    rnd = torch.randint(low, high, (1,)).item()
+    # Sizes must be divisible by 7 for adaptive_avg_pool2d on MPS (Apple Silicon)
+    valid_sizes = [s for s in range(low, high) if s % 7 == 0]
+    if not valid_sizes:
+        valid_sizes = [s for s in range(low - 7, high + 7) if s % 7 == 0 and s >= 56]
+    rnd = valid_sizes[torch.randint(0, len(valid_sizes), (1,)).item()]
     rescaled = F.interpolate(x, size=(rnd, rnd), mode='bilinear',
                              align_corners=False)
     pad_h = high - rnd
     pad_w = high - rnd
-    pad_top = torch.randint(0, pad_h + 1, (1,)).item()
-    pad_left = torch.randint(0, pad_w + 1, (1,)).item()
+    pad_top = torch.randint(0, max(1, pad_h + 1), (1,)).item()
+    pad_left = torch.randint(0, max(1, pad_w + 1), (1,)).item()
     padded = F.pad(rescaled,
                    (pad_left, pad_w - pad_left, pad_top, pad_h - pad_top))
     return padded
@@ -228,6 +232,9 @@ def _random_resize_ste(x: torch.Tensor, min_scale: float = 0.6,
     _, _, h, w = x.shape
     scale = min_scale + torch.rand(1).item() * (max_scale - min_scale)
     sh, sw = int(h * scale), int(w * scale)
+    # Ensure sizes divisible by 7 for MPS compatibility
+    sh = max(7, (sh // 7) * 7)
+    sw = max(7, (sw // 7) * 7)
     with torch.no_grad():
         down = F.interpolate(x, size=(sh, sw), mode='bilinear', align_corners=False)
         up = F.interpolate(down, size=(h, w), mode='bilinear', align_corners=False)
